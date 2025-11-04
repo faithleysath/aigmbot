@@ -1,13 +1,4 @@
-import os
 from ncatbot.core import BotClient, PrivateMessage
-
-# 从环境变量中获取机器人QQ号和管理员QQ号
-bot_qq = os.getenv("BOT_QQ")
-root_qq = os.getenv("ROOT_QQ")
-
-if not bot_qq or not root_qq:
-    print("错误: 请设置 BOT_QQ 和 ROOT_QQ 环境变量后再运行容器。")
-    exit(1)
 
 # ========== 创建 BotClient 实例 ==========
 bot = BotClient()
@@ -24,9 +15,7 @@ async def on_private_message(msg: PrivateMessage):
 
 # ========== 启动 BotClient ==========
 print(f"NcatBot 正在启动...")
-print(f"机器人 QQ: {bot_qq}")
-print(f"管理员 QQ: {root_qq}")
 print("首次运行或QQ掉线后，请在终端内扫描二维码登录。")
 
 # 以前台模式运行 Bot，它会一直运行直到容器停止
-bot.run_frontend(bt_uin=bot_qq, root=root_qq)
+bot.run_frontend()
