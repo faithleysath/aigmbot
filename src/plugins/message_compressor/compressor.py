@@ -1,4 +1,4 @@
-from ncatbot.plugin_system import NcatBotPlugin, on_message, command_registry, group_filter
+from ncatbot.plugin_system import NcatBotPlugin, command_registry, group_filter
 from ncatbot.core.event import GroupMessageEvent
 from ncatbot.core.helper.forward_constructor import ForwardConstructor
 from collections import defaultdict
@@ -60,8 +60,12 @@ class MessageCompressorPlugin(NcatBotPlugin):
         member_info = await self.api.get_group_member_info(event.group_id, event.user_id)
         return member_info.role in ["admin", "owner"]
 
-    @on_message
+    @group_filter
     async def on_group_message(self, event: GroupMessageEvent):
+        # 忽略命令消息
+        if event.raw_message.startswith('/'):
+            return
+
         group_id = event.group_id
         
         # 检查功能是否在该群被禁用
