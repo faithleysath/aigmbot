@@ -1,5 +1,5 @@
 ```bash
-docker build --no-cache -t ncatbot-app .
+docker build -t ncatbot-app .
 ```
 
 ```bash

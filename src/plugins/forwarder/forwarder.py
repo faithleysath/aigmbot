@@ -38,7 +38,7 @@ class ForwarderPlugin(NcatBotPlugin):
         self.message_buffers[group_id].append(event)
 
         # 3. 检查一级合并转发条件
-        if len(self.message_buffers[group_id]) >= 33:
+        if len(self.message_buffers[group_id]) >= 24:
             # 防止并发问题，复制并清空
             messages_to_forward = self.message_buffers[group_id][:]
             self.message_buffers[group_id].clear()
@@ -75,7 +75,7 @@ class ForwarderPlugin(NcatBotPlugin):
             self.forward_buffers[group_id].append(sent_forward_info)
 
             # 检查二级合并转发条件
-            if len(self.forward_buffers[group_id]) >= 3:
+            if len(self.forward_buffers[group_id]) >= 4:
                 forwards_to_nest = self.forward_buffers[group_id][:]
                 self.forward_buffers[group_id].clear()
                 await self.create_and_send_level_two_forward(group_id, forwards_to_nest)
