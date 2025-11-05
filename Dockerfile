@@ -16,6 +16,9 @@ COPY requirements.txt .
 # 只有当 requirements.txt 变化时，这一层才会重新构建
 RUN pip install -r requirements.txt --no-cache-dir
 
+# 安装playwright
+RUN playwright install --with-deps
+
 # 将src目录下的所有文件复制到容器的/app目录中
 COPY src/ /app/
 
