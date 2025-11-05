@@ -70,4 +70,4 @@ async def handle_group_message(msg: GroupMessageEvent):
         await msg.reply("pong")
 
 # 启动 Bot
-bot.run_frontend()
+bot.run_frontend(debug=True)
