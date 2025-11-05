@@ -232,6 +232,10 @@ class AIGamePlugin(NcatBotPlugin):
         if event.notice_type != 'group_msg_emoji_like' or not event.is_add:
             return # 只处理添加表情的事件
 
+        # 忽略机器人自己的表情回应，防止自我触发
+        if str(event.user_id) == str(event.self_id):
+            return
+
         if not self.db or not self.db.conn:
             return
 
