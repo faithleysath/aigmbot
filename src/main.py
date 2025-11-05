@@ -15,7 +15,7 @@ async def handle_notice_event(event: NoticeEvent):
     处理所有通知事件，并专门找出贴表情事件。
     """
     # 检查通知类型是否为“群消息表情回应”
-    if event.notice_type == "group_msg_emoji_like":
+    if event.notice_type == "group_msg_emoji_likes":
         
         # 从事件数据中提取关键信息
         group_id = event.group_id
