@@ -17,6 +17,7 @@ class EmojiNotifierPlugin(NcatBotPlugin):
     @command_registry.command("react", description="让bot给当前消息贴上指定emoji")
     async def react_command(self, event: BaseMessageEvent, emoji_id: str):
         """处理贴表情命令"""
+        return
         try:
             # 将 emoji_id 转换为整数
             int_emoji_id = int(emoji_id)
@@ -30,6 +31,7 @@ class EmojiNotifierPlugin(NcatBotPlugin):
     @on_notice
     async def handle_emoji_like(self, event: NoticeEvent):
         """处理群消息表情回应通知"""
+        return
         if event.notice_type == 'group_msg_emoji_like':
             group_id = event.group_id
             user_id = event.user_id  # 操作者（贴表情/撤销表情的人）
