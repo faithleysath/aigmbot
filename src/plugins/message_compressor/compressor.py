@@ -1,5 +1,5 @@
-from ncatbot.plugin_system import NcatBotPlugin, command_registry, group_filter
-from ncatbot.core.event import GroupMessageEvent
+from ncatbot.plugin_system import NcatBotPlugin, command_registry, group_filter, on_notice
+from ncatbot.core.event import GroupMessageEvent, NoticeEvent
 from ncatbot.core.helper.forward_constructor import ForwardConstructor
 from ncatbot.utils import get_log
 from collections import defaultdict
@@ -54,6 +54,16 @@ class MessageCompressorPlugin(NcatBotPlugin):
         """检查消息发送者是否为群管理员或群主"""
         member_info = await self.api.get_group_member_info(event.group_id, event.user_id)
         return member_info.role in ["admin", "owner"]
+
+    @on_notice
+    async def _handle_admin_change_notice(self, event: NoticeEvent):
+        """监听管理员变更通知以直接更新缓存"""
+        if event.notice_type == 'group_admin' and event.user_id == self.bot_id:
+            group_id = event.group_id
+            is_admin = (event.sub_type == 'set')
+            self.admin_status_cache[group_id] = is_admin
+            status_text = "授予" if is_admin else "取消"
+            LOG.info(f"检测到机器人在群 {group_id} 的管理员权限被{status_text}，已更新缓存。")
 
     @group_filter
     async def on_group_message(self, event: GroupMessageEvent):
