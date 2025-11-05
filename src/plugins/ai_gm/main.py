@@ -42,7 +42,7 @@ class AIGamePlugin(NcatBotPlugin):
 
         # 初始化数据库
         # NcatBotPlugin 基类提供了 self.data_path，这是一个 Path 对象，指向插件的私有数据目录
-        db_path = self.data_path / "aigm.db"
+        db_path = self.data_path / "data" / "AIGamePlugin" / "aigame_plugin.db"
         LOG.debug(f"[{self.name}] 数据库路径: {db_path}")
         self.db = Database(str(db_path))
         await self.db.connect()
