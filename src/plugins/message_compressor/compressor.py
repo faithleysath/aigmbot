@@ -1,10 +1,11 @@
 from ncatbot.plugin_system import NcatBotPlugin, command_registry, group_filter
 from ncatbot.core.event import GroupMessageEvent
 from ncatbot.core.helper.forward_constructor import ForwardConstructor
+from ncatbot.utils import get_log
 from collections import defaultdict
 import asyncio
-import json
-import os
+
+LOG = get_log(__name__)
 
 class MessageCompressorPlugin(NcatBotPlugin):
     name = "MessageCompressorPlugin"
@@ -14,46 +15,40 @@ class MessageCompressorPlugin(NcatBotPlugin):
 
     async def on_load(self):
         self.bot_id = None
-        # 确保插件名和文件名一致，以便正确找到配置文件
-        self.settings_file_path = "data/MessageCompressorPlugin/group_settings.json"
         
         # 注册全局配置项
         self.register_config("message_threshold", 33)
         self.register_config("forward_threshold", 3)
         
-        # 用于存储每个群的特定设置
-        self.group_settings = defaultdict(dict)
-        self._load_group_settings()
+        # 用于存储每个群的特定设置, a dict that will be persisted automatically
+        self.register_config("group_settings", {})
 
         # 使用 defaultdict 简化缓冲区初始化
         self.message_buffers = defaultdict(list)
         self.forward_buffers = defaultdict(list)
+        self.admin_status_cache = {}
 
-    def _load_group_settings(self):
-        """从文件加载群聊设置"""
-        try:
-            if os.path.exists(self.settings_file_path):
-                with open(self.settings_file_path, 'r', encoding='utf-8') as f:
-                    loaded_settings = json.load(f)
-                    # 将加载的 dict 转换为 defaultdict
-                    self.group_settings.update({k: v for k, v in loaded_settings.items()})
-        except (FileNotFoundError, json.JSONDecodeError):
-            # 文件不存在或损坏，使用默认空设置
-            pass
+    # The _load_group_settings, _save_group_settings, and on_close methods
+    # are no longer needed as the framework handles config persistence automatically.
 
-    def _save_group_settings(self):
-        """将群聊设置保存到文件"""
+    async def _is_bot_admin_in_group(self, group_id: str) -> bool:
+        """检查机器人是否为群管理员或群主，并缓存结果。"""
+        if group_id in self.admin_status_cache:
+            return self.admin_status_cache[group_id]
+
+        if not self.bot_id:
+            LOG.warning("Bot ID not available, cannot check admin status.")
+            return False
+
         try:
-            # 确保目录存在
-            os.makedirs(os.path.dirname(self.settings_file_path), exist_ok=True)
-            with open(self.settings_file_path, 'w', encoding='utf-8') as f:
-                json.dump(self.group_settings, f, ensure_ascii=False, indent=4)
+            member_info = await self.api.get_group_member_info(group_id, self.bot_id)
+            is_admin = member_info.role in ["admin", "owner"]
+            self.admin_status_cache[group_id] = is_admin
+            return is_admin
         except Exception as e:
-            print(f"保存群聊设置时出错: {e}")
-
-    async def on_close(self):
-        """插件关闭时保存设置"""
-        self._save_group_settings()
+            LOG.error(f"获取群 {group_id} 的机器人成员信息失败: {e}")
+            self.admin_status_cache[group_id] = False  # 缓存失败结果以避免重复请求
+            return False
 
     async def _is_group_admin(self, event: GroupMessageEvent) -> bool:
         """检查消息发送者是否为群管理员或群主"""
@@ -62,29 +57,31 @@ class MessageCompressorPlugin(NcatBotPlugin):
 
     @group_filter
     async def on_group_message(self, event: GroupMessageEvent):
-        # 忽略命令消息
-        if event.raw_message.startswith('/'):
-            return
-
-        group_id = event.group_id
-        
-        # 检查功能是否在该群被禁用
-        if not self.group_settings[group_id].get("enabled", True):
-            return
-
         # 首次接收消息时，记录 bot 的 ID
         if self.bot_id is None:
             self.bot_id = event.self_id
 
-        # 1. 过滤消息
+        # 忽略命令消息或被禁用的群聊
+        if event.raw_message.startswith('/') or not self.config["group_settings"].get(event.group_id, {}).get("enabled", True):
+            return
+
+        await self._handle_message_buffering(event)
+
+    async def _handle_message_buffering(self, event: GroupMessageEvent):
+        """处理消息缓冲和触发压缩"""
+        group_id = event.group_id
+
+        # 过滤掉机器人自身的消息或@机器人的消息
         if event.user_id == self.bot_id or f"[CQ:at,qq={self.bot_id}]" in event.raw_message:
             return
 
-        # 2. 将消息加入缓冲区
+        # 将消息加入缓冲区
         self.message_buffers[group_id].append(event)
 
-        # 3. 检查一级合并转发条件
-        message_threshold = int(self.group_settings[group_id].get("message_threshold", self.config["message_threshold"]))
+        # 检查是否达到一级合并转发的阈值
+        group_conf = self.config["group_settings"].get(group_id, {})
+        message_threshold = int(group_conf.get("message_threshold", self.config["message_threshold"]))
+        
         if len(self.message_buffers[group_id]) >= message_threshold:
             messages_to_forward = self.message_buffers[group_id][:]
             self.message_buffers[group_id].clear()
@@ -96,9 +93,8 @@ class MessageCompressorPlugin(NcatBotPlugin):
             return  # 如果 bot_id 未知，则无法继续
 
         try:
-            # 检查 bot 是否为管理员或群主
-            member_info = await self.api.get_group_member_info(group_id, self.bot_id)
-            if member_info.role not in ["admin", "owner"]:
+            # 检查 bot 是否为管理员或群主（使用缓存）
+            if not await self._is_bot_admin_in_group(group_id):
                 # 如果不是管理员或群主，则不执行任何操作
                 return
 
@@ -126,15 +122,15 @@ class MessageCompressorPlugin(NcatBotPlugin):
             self.forward_buffers[group_id].append(sent_forward_info)
 
             # 检查二级合并转发条件
-            forward_threshold = int(self.group_settings[group_id].get("forward_threshold", self.config["forward_threshold"]))
+            group_conf = self.config["group_settings"].get(group_id, {})
+            forward_threshold = int(group_conf.get("forward_threshold", self.config["forward_threshold"]))
             if len(self.forward_buffers[group_id]) >= forward_threshold:
                 forwards_to_nest = self.forward_buffers[group_id][:]
                 self.forward_buffers[group_id].clear()
                 await self.create_and_send_level_two_forward(group_id, forwards_to_nest)
 
         except Exception as e:
-            # 记录错误，实际使用中建议使用 self.log
-            print(f"创建一级合并转发时出错: {e}")
+            LOG.error(f"创建一级合并转发时出错: {e}")
 
     async def create_and_send_level_two_forward(self, group_id: str, forward_message_ids: list[str]):
         """创建并发送嵌套的二级合并转发"""
@@ -161,7 +157,7 @@ class MessageCompressorPlugin(NcatBotPlugin):
                     pass # 忽略撤回失败
 
         except Exception as e:
-            print(f"创建二级合并转发时出错: {e}")
+            LOG.error(f"创建二级合并转发时出错: {e}")
 
     # --- Admin Commands ---
 
@@ -175,13 +171,11 @@ class MessageCompressorPlugin(NcatBotPlugin):
         group_id = event.group_id
         
         if action in ["enable", "on"]:
-            self.group_settings[group_id]["enabled"] = True
-            self._save_group_settings()
+            self.config["group_settings"].setdefault(group_id, {})["enabled"] = True
             await event.reply("✅ 在本群已启用自动打包压缩功能。")
         
         elif action in ["disable", "off"]:
-            self.group_settings[group_id]["enabled"] = False
-            self._save_group_settings()
+            self.config["group_settings"].setdefault(group_id, {})["enabled"] = False
             await event.reply("❌ 在本群已禁用自动打包压缩功能。")
 
         elif action == "threshold":
@@ -189,18 +183,26 @@ class MessageCompressorPlugin(NcatBotPlugin):
                 await event.reply("❌ 参数不足，请提供两个有效的数字作为阈值。\n用法: /compressor threshold <消息数> <转发数>")
                 return
             try:
+                errors = []
                 msg_threshold = int(val1)
                 fwd_threshold = int(val2)
-                if msg_threshold * fwd_threshold > 100:
-                    await event.reply("❌ 设置失败：两个阈值的乘积不能超过100。")
-                    return
-                if msg_threshold < 2 or fwd_threshold < 2:
-                    await event.reply("❌ 设置失败：单个阈值不能小于2。")
-                    return
+
+                if msg_threshold < 2:
+                    errors.append("消息数阈值不能小于2。")
+                if fwd_threshold < 2:
+                    errors.append("转发数阈值不能小于2。")
                 
-                self.group_settings[group_id]["message_threshold"] = msg_threshold
-                self.group_settings[group_id]["forward_threshold"] = fwd_threshold
-                self._save_group_settings()
+                if not errors and msg_threshold * fwd_threshold > 100:
+                    errors.append("两个阈值的乘积不能超过100。")
+
+                if errors:
+                    error_message = "❌ 设置失败：\n" + "\n".join(f"- {e}" for e in errors)
+                    await event.reply(error_message)
+                    return
+
+                group_conf = self.config["group_settings"].setdefault(group_id, {})
+                group_conf["message_threshold"] = msg_threshold
+                group_conf["forward_threshold"] = fwd_threshold
                 await event.reply(
                     f"✅ 在本群的触发阈值已更新：\n"
                     f"- 消息数达到 {msg_threshold} 条时打包\n"
@@ -210,7 +212,7 @@ class MessageCompressorPlugin(NcatBotPlugin):
                 await event.reply("❌ 参数错误，请提供两个有效的数字作为阈值。\n用法: /compressor threshold <消息数> <转发数>")
 
         elif action == "status":
-            settings = self.group_settings[group_id]
+            settings = self.config["group_settings"].get(group_id, {})
             enabled = settings.get("enabled", True)
 
             is_msg_thresh_global = "message_threshold" not in settings
