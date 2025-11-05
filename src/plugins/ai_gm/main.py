@@ -25,6 +25,7 @@ class AIGamePlugin(NcatBotPlugin):
         self.db: Database | None = None
         self.llm_api: LLM_API | None = None
         self.renderer: MarkdownRenderer | None = None
+        self.vote_cache: dict = {} # 用于实时追踪投票情况
         self.data_path: Path = Path() # Add type hint for data_path
 
     async def on_load(self):
@@ -259,24 +260,31 @@ class AIGamePlugin(NcatBotPlugin):
     @on_notice
     async def handle_emoji_reaction(self, event: NoticeEvent):
         """处理表情回应，这是游戏结算和状态变更的核心触发器"""
-        if event.notice_type != 'group_msg_emoji_like' or not event.is_add:
-            return # 只处理添加表情的事件
-
-        # 忽略机器人自己的表情回应，防止自我触发
-        if str(event.user_id) == str(event.self_id):
+        if event.notice_type != 'group_msg_emoji_like':
             return
 
-        if not self.db or not self.db.conn:
+        user_id = str(event.user_id)
+        # 忽略机器人自己的表情回应，防止自我触发和污染缓存
+        if user_id == str(event.self_id):
             return
 
         group_id = str(event.group_id)
-        user_id = str(event.user_id)
         message_id = str(event.message_id)
-        
         if event.emoji_like_id is None:
             return
         emoji_id = int(event.emoji_like_id)
-        LOG.debug(f"[{self.name}] 收到表情回应: group={group_id}, user={user_id}, msg={message_id}, emoji={emoji_id}")
+
+        # 更新投票缓存
+        if event.is_add:
+            self.vote_cache.setdefault(message_id, {}).setdefault(emoji_id, set()).add(user_id)
+            LOG.debug(f"[{self.name}] 投票缓存更新: ADD - msg={message_id}, emoji={emoji_id}, user={user_id}")
+        else: # is_add is False, means emoji is removed
+            if message_id in self.vote_cache and emoji_id in self.vote_cache[message_id]:
+                self.vote_cache[message_id][emoji_id].discard(user_id)
+                LOG.debug(f"[{self.name}] 投票缓存更新: REMOVE - msg={message_id}, emoji={emoji_id}, user={user_id}")
+
+        if not self.db or not self.db.conn:
+            return
 
         # 定义管理员操作的表情
         admin_action_emojis = {127881: 'confirm', 128560: 'deny', 10060: 'retract_game'}
@@ -334,37 +342,27 @@ class AIGamePlugin(NcatBotPlugin):
 
     async def _tally_votes(self, group_id: str, main_message_id: str) -> tuple[dict, str]:
         """统计一轮投票的结果，返回分数和格式化的结果字符串"""
-        LOG.debug(f"[{self.name}] 开始计票，群ID: {group_id}, 主消息ID: {main_message_id}")
+        LOG.debug(f"[{self.name}] 开始从缓存计票，群ID: {group_id}, 主消息ID: {main_message_id}")
         if not self.db or not self.db.conn:
             raise RuntimeError("Database not connected.")
 
         scores = {}
         result_lines = ["🗳️ 投票结果统计："]
         
-        # 获取机器人自己的 ID 以便排除
-        bot_info = await self.api.get_login_info()
-        bot_id = str(bot_info.user_id)
-        
-        # 1. 统计 A-G 选项的票数
+        # 1. 统计主消息的预设选项票数
         LOG.debug(f"[{self.name}] 正在统计预设选项的票数...")
         option_emoji_map = {
             127822: 'A', 9973: 'B', 128663: 'C', 128054: 'D',
             127859: 'E', 128293: 'F', 128123: 'G'
         }
+        message_votes = self.vote_cache.get(main_message_id, {})
         for emoji_id, option in option_emoji_map.items():
-            try:
-                reactors_data = await self.api.fetch_emoji_like(main_message_id, emoji_id, emoji_type=1)
-                reactors = reactors_data.get('emojiLikesList', [])
-                # 排除机器人自己
-                actual_reactors = [r for r in reactors if str(r.get('tinyId')) != bot_id]
-                count = len(actual_reactors)
-                
-                if count > 0:
-                    scores[option] = count
-                    result_lines.append(f"- 选项 {option}: {count} 票")
-                    LOG.debug(f"[{self.name}] 选项 {option} (emoji: {emoji_id}) 获得 {count} 票。")
-            except Exception as e:
-                LOG.warning(f"获取表情 {emoji_id} 反应失败: {e}")
+            voters = message_votes.get(emoji_id, set())
+            count = len(voters)
+            if count > 0:
+                scores[option] = count
+                result_lines.append(f"- 选项 {option}: {count} 票")
+                LOG.debug(f"[{self.name}] 选项 {option} (emoji: {emoji_id}) 获得 {count} 票。")
 
         # 2. 统计自定义输入的票数
         LOG.debug(f"[{self.name}] 正在统计自定义输入的票数...")
@@ -378,18 +376,14 @@ class AIGamePlugin(NcatBotPlugin):
             custom_inputs = await cursor.fetchall()
 
         for msg_id, content, user_id in custom_inputs:
-            try:
-                yay_reactors = await self.api.fetch_emoji_like(msg_id, 127881, emoji_type=1) # 🎉
-                yay_count = len(yay_reactors.get('emojiLikesList', []))
-                nay_reactors = await self.api.fetch_emoji_like(msg_id, 128560, emoji_type=1) # 😰
-                nay_count = len(nay_reactors.get('emojiLikesList', []))
-                
-                net_score = yay_count - nay_count
-                scores[f"custom_{msg_id}"] = {"score": net_score, "content": content, "user_id": user_id}
-                result_lines.append(f"- 自定义输入 (来自 @{user_id}): \"{content[:20]}...\" - 净得票: {net_score}")
-                LOG.debug(f"[{self.name}] 自定义输入 '{content[:20]}...' (msg_id: {msg_id}) 净得票: {net_score} (赞成: {yay_count}, 反对: {nay_count})")
-            except Exception as e:
-                LOG.warning(f"获取自定义输入 {msg_id} 反应失败: {e}")
+            input_votes = self.vote_cache.get(str(msg_id), {})
+            yay_count = len(input_votes.get(127881, set())) # 🎉
+            nay_count = len(input_votes.get(128560, set())) # 😰
+            
+            net_score = yay_count - nay_count
+            scores[f"custom_{msg_id}"] = {"score": net_score, "content": content, "user_id": user_id}
+            result_lines.append(f"- 自定义输入 (来自 @{user_id}): \"{content[:20]}...\" - 净得票: {net_score}")
+            LOG.debug(f"[{self.name}] 自定义输入 '{content[:20]}...' (msg_id: {msg_id}) 净得票: {net_score} (赞成: {yay_count}, 反对: {nay_count})")
         
         LOG.debug(f"[{self.name}] 计票完成。Scores: {scores}")
         return scores, "\n".join(result_lines)
@@ -401,6 +395,25 @@ class AIGamePlugin(NcatBotPlugin):
         
         scores, result_text = await self._tally_votes(group_id, message_id)
         await self.api.post_group_msg(group_id, text=result_text, reply=message_id)
+        
+        # 清理本轮所有相关的投票缓存
+        LOG.debug(f"[{self.name}] 正在清理与主消息 {message_id} 相关的所有投票缓存...")
+        # 1. 清理主消息的缓存
+        self.vote_cache.pop(message_id, None)
+        # 2. 清理所有自定义输入的缓存
+        async with self.db.conn.cursor() as cursor:
+            await cursor.execute(
+                """SELECT ci.message_id FROM custom_inputs ci
+                   JOIN rounds r ON ci.round_id = r.id
+                   WHERE r.main_message_id = ?""",
+                (message_id,)
+            )
+            inputs_to_clear = await cursor.fetchall()
+            for (input_msg_id,) in inputs_to_clear:
+                self.vote_cache.pop(str(input_msg_id), None)
+                LOG.debug(f"[{self.name}] 已清理自定义输入 {input_msg_id} 的投票缓存。")
+        
+        LOG.debug(f"[{self.name}] 所有相关投票缓存清理完毕。")
 
         if not scores:
             LOG.warning(f"[{self.name}] 计票结果为空，本轮无效。")
