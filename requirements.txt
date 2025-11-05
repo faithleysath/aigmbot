@@ -1,2 +1,3 @@
 ncatbot
 openai
+aiosqlite
