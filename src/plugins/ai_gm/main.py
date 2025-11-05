@@ -1,6 +1,7 @@
 import os
 import json
 import uuid
+import openai
 from pathlib import Path
 
 from ncatbot.plugin_system import NcatBotPlugin, command_registry, on_notice, filter_registry
@@ -389,37 +390,19 @@ class AIGamePlugin(NcatBotPlugin):
         return scores, "\n".join(result_lines)
 
     async def _handle_confirm(self, group_id: str, message_id: str):
-        """处理确认操作"""
+        """处理确认操作，支持在API调用失败时重试"""
         if not self.db or not self.db.conn or not self.llm_api: return
         LOG.info(f"群 {group_id} 管理员确认了投票 (消息: {message_id})")
         
         scores, result_text = await self._tally_votes(group_id, message_id)
         await self.api.post_group_msg(group_id, text=result_text, reply=message_id)
-        
-        # 清理本轮所有相关的投票缓存
-        LOG.debug(f"[{self.name}] 正在清理与主消息 {message_id} 相关的所有投票缓存...")
-        # 1. 清理主消息的缓存
-        self.vote_cache.pop(message_id, None)
-        # 2. 清理所有自定义输入的缓存
-        async with self.db.conn.cursor() as cursor:
-            await cursor.execute(
-                """SELECT ci.message_id FROM custom_inputs ci
-                   JOIN rounds r ON ci.round_id = r.id
-                   WHERE r.main_message_id = ?""",
-                (message_id,)
-            )
-            inputs_to_clear = await cursor.fetchall()
-            for (input_msg_id,) in inputs_to_clear:
-                self.vote_cache.pop(str(input_msg_id), None)
-                LOG.debug(f"[{self.name}] 已清理自定义输入 {input_msg_id} 的投票缓存。")
-        
-        LOG.debug(f"[{self.name}] 所有相关投票缓存清理完毕。")
 
         if not scores:
             LOG.warning(f"[{self.name}] 计票结果为空，本轮无效。")
             await self.api.post_group_msg(group_id, text="无人投票，本轮无效，请重新开始或由管理员继续。")
             return
 
+        # 1. 决定胜出者
         max_score = -float('inf')
         for key, value in scores.items():
             current_score = value if isinstance(value, int) else value['score']
@@ -442,6 +425,7 @@ class AIGamePlugin(NcatBotPlugin):
         user_choice_text = " & ".join(winning_content)
         LOG.info(f"[{self.name}] 最终胜出的选择是: '{user_choice_text}'")
 
+        # 2. 准备API调用，但不修改状态
         async with self.db.conn.cursor() as cursor:
             LOG.debug(f"[{self.name}] 从数据库检索当前消息历史...")
             await cursor.execute("SELECT messages_history FROM games WHERE group_id = ?", (group_id,))
@@ -449,21 +433,52 @@ class AIGamePlugin(NcatBotPlugin):
             if not game_row: return
 
             messages_history = json.loads(game_row[0])
-            messages_history.append({"role": "user", "content": user_choice_text})
             
-            LOG.debug(f"[{self.name}] 调用 LLM 获取下一轮内容...")
-            new_assistant_response = await self.llm_api.get_completion(messages_history)
+        temp_messages_history = messages_history + [{"role": "user", "content": user_choice_text}]
+        
+        # 3. 尝试调用API
+        LOG.debug(f"[{self.name}] 调用 LLM 获取下一轮内容...")
+        try:
+            new_assistant_response = await self.llm_api.get_completion(temp_messages_history)
             if not new_assistant_response:
                 LOG.error(f"[{self.name}] LLM 未返回下一轮内容，游戏中断。")
-                await self.api.post_group_msg(group_id, text="❌ GM 没有回应，游戏中断。")
+                await self.api.post_group_msg(group_id, text="❌ GM 没有回应，游戏中断。请管理员修复后重试。")
                 return
-            
-            messages_history.append({"role": "assistant", "content": new_assistant_response})
-            
-            LOG.debug(f"[{self.name}] 更新数据库中的消息历史...")
-            await cursor.execute("UPDATE games SET messages_history = ? WHERE group_id = ?", (json.dumps(messages_history), group_id))
-            await self.db.conn.commit()
+        except openai.RateLimitError:
+            LOG.warning(f"[{self.name}] LLM API 调用超出频率限制。")
+            await self.api.post_group_msg(group_id, text="🧠 GM 脑袋过载了，请管理员稍等片刻后再次点击 ✅ 重试。")
+            return
+        except openai.APIError as e:
+            LOG.error(f"[{self.name}] LLM API 调用时发生错误: {e}")
+            await self.api.post_group_msg(group_id, text=f"❌ 与 GM 通信时发生错误，请管理员修复后再次点击 ✅ 重试。\n错误: {e}")
+            return
 
+        # 4. API调用成功后，清理缓存并更新数据库
+        LOG.debug(f"[{self.name}] API调用成功，正在更新游戏状态...")
+        
+        # 清理本轮所有相关的投票缓存
+        LOG.debug(f"[{self.name}] 正在清理与主消息 {message_id} 相关的所有投票缓存...")
+        self.vote_cache.pop(message_id, None)
+        async with self.db.conn.cursor() as cursor:
+            await cursor.execute(
+                """SELECT ci.message_id FROM custom_inputs ci
+                   JOIN rounds r ON ci.round_id = r.id
+                   WHERE r.main_message_id = ?""",
+                (message_id,)
+            )
+            inputs_to_clear = await cursor.fetchall()
+            for (input_msg_id,) in inputs_to_clear:
+                self.vote_cache.pop(str(input_msg_id), None)
+        LOG.debug(f"[{self.name}] 所有相关投票缓存清理完毕。")
+
+        # 更新数据库
+        final_messages_history = temp_messages_history + [{"role": "assistant", "content": new_assistant_response}]
+        async with self.db.conn.cursor() as cursor:
+            LOG.debug(f"[{self.name}] 更新数据库中的消息历史...")
+            await cursor.execute("UPDATE games SET messages_history = ? WHERE group_id = ?", (json.dumps(final_messages_history), group_id))
+        await self.db.conn.commit()
+
+        # 5. 开启下一轮
         await self._start_next_round(group_id, new_assistant_response)
 
     async def _handle_deny(self, group_id: str, message_id: str):
