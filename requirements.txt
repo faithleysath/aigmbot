@@ -1,3 +1,5 @@
 ncatbot
 openai
 aiosqlite
+markdown-it-py
+playwright
