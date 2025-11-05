@@ -93,11 +93,6 @@ class MessageCompressorPlugin(NcatBotPlugin):
             return  # 如果 bot_id 未知，则无法继续
 
         try:
-            # 检查 bot 是否为管理员或群主（使用缓存）
-            if not await self._is_bot_admin_in_group(group_id):
-                # 如果不是管理员或群主，则不执行任何操作
-                return
-
             # 构造转发内容
             forward_constructor = ForwardConstructor(self.bot_id, "消息摘要")
             for msg in messages:
@@ -110,13 +105,15 @@ class MessageCompressorPlugin(NcatBotPlugin):
             if not sent_forward_info:
                 return
 
-            # 撤回原始消息
-            for msg in messages:
-                await asyncio.sleep(0.2) # 短暂延迟以避免过于频繁的 API 调用
-                try:
-                    await self.api.delete_msg(msg.message_id)
-                except Exception:
-                    pass # 忽略撤回失败的消息
+            # 检查 bot 是否为管理员或群主（使用缓存），仅用于决定是否撤回
+            if await self._is_bot_admin_in_group(group_id):
+                # 撤回原始消息
+                for msg in messages:
+                    await asyncio.sleep(0.2) # 短暂延迟以避免过于频繁的 API 调用
+                    try:
+                        await self.api.delete_msg(msg.message_id)
+                    except Exception:
+                        pass # 忽略撤回失败的消息
 
             # 将新发送的合并转发加入二级缓冲区
             self.forward_buffers[group_id].append(sent_forward_info)
@@ -214,6 +211,7 @@ class MessageCompressorPlugin(NcatBotPlugin):
         elif action == "status":
             settings = self.config["group_settings"].get(group_id, {})
             enabled = settings.get("enabled", True)
+            has_admin_privilege = await self._is_bot_admin_in_group(group_id)
 
             is_msg_thresh_global = "message_threshold" not in settings
             is_fwd_thresh_global = "forward_threshold" not in settings
@@ -231,6 +229,7 @@ class MessageCompressorPlugin(NcatBotPlugin):
             status_text = (
                 f"--- 本群自动打包状态 ---\n"
                 f"功能状态: {'✅ 已启用' if enabled else '❌ 已禁用'}\n"
+                f"撤回权限: {'✅ 可用' if has_admin_privilege else '❌ 不可用'}\n"
                 f"一级阈值: {msg_thresh_str} 条消息\n"
                 f"二级阈值: {fwd_thresh_str} 条打包记录\n"
                 f"当前缓存: {msg_buffer_count} 条消息 | {fwd_buffer_count} 条打包记录\n"
