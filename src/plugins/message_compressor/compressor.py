@@ -31,11 +31,8 @@ class MessageCompressorPlugin(NcatBotPlugin):
     # The _load_group_settings, _save_group_settings, and on_close methods
     # are no longer needed as the framework handles config persistence automatically.
 
-    async def _is_bot_admin_in_group(self, group_id: str) -> bool:
-        """检查机器人是否为群管理员或群主，并缓存结果。"""
-        if group_id in self.admin_status_cache:
-            return self.admin_status_cache[group_id]
-
+    async def _fetch_bot_admin_status(self, group_id: str) -> bool:
+        """强制从 API 获取机器人是否为群管理员或群主，并更新缓存。"""
         if not self.bot_id:
             LOG.warning("Bot ID not available, cannot check admin status.")
             return False
@@ -43,12 +40,20 @@ class MessageCompressorPlugin(NcatBotPlugin):
         try:
             member_info = await self.api.get_group_member_info(group_id, self.bot_id)
             is_admin = member_info.role in ["admin", "owner"]
-            self.admin_status_cache[group_id] = is_admin
+            self.admin_status_cache[group_id] = is_admin  # 更新缓存
             return is_admin
         except Exception as e:
             LOG.error(f"获取群 {group_id} 的机器人成员信息失败: {e}")
-            self.admin_status_cache[group_id] = False  # 缓存失败结果以避免重复请求
+            self.admin_status_cache[group_id] = False  # 缓存失败结果
             return False
+
+    async def _is_bot_admin_in_group(self, group_id: str) -> bool:
+        """检查机器人是否为群管理员或群主，优先使用缓存。"""
+        if group_id in self.admin_status_cache:
+            return self.admin_status_cache[group_id]
+        
+        # 如果缓存中没有，则从 API 获取
+        return await self._fetch_bot_admin_status(group_id)
 
     async def _is_group_admin(self, event: GroupMessageEvent) -> bool:
         """检查消息发送者是否为群管理员或群主"""
@@ -221,7 +226,8 @@ class MessageCompressorPlugin(NcatBotPlugin):
         elif action == "status":
             settings = self.config["group_settings"].get(group_id, {})
             enabled = settings.get("enabled", True)
-            has_admin_privilege = await self._is_bot_admin_in_group(group_id)
+            # 强制刷新状态以获取最新信息
+            has_admin_privilege = await self._fetch_bot_admin_status(group_id)
 
             is_msg_thresh_global = "message_threshold" not in settings
             is_fwd_thresh_global = "forward_threshold" not in settings
