@@ -137,7 +137,8 @@ class AIGamePlugin(NcatBotPlugin):
         # 表情ID来自于你的描述
         emoji_map = {
             'A': 127822, 'B': 9973, 'C': 128663, 'D': 128054,
-            'E': 127859, 'F': 128293, 'G': 128123
+            'E': 127859, 'F': 128293, 'G': 128123,
+            'Confirm': 127881, 'Deny': 128560, 'Retract': 10060
         }
         for _, emoji_id in emoji_map.items():
             try:
@@ -456,7 +457,8 @@ class AIGamePlugin(NcatBotPlugin):
 
         emoji_map = {
             'A': 127822, 'B': 9973, 'C': 128663, 'D': 128054,
-            'E': 127859, 'F': 128293, 'G': 128123
+            'E': 127859, 'F': 128293, 'G': 128123,
+            'Confirm': 127881, 'Deny': 128560, 'Retract': 10060
         }
         for _, emoji_id in emoji_map.items():
             try:
