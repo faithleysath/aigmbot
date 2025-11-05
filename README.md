@@ -3,7 +3,7 @@ docker build -t ncatbot-app .
 ```
 
 ```bash
-touch config.yaml && docker run -it --rm -v "$(pwd)/src/main.py":/app/main.py -v "$(pwd)/src/plugins":/app/plugins -v "$(pwd)/config.yaml":/app/config.yaml --name ncatbot-container ncatbot-app
+touch config.yaml && docker run -it --rm -v "$(pwd)/src/main.py":/app/main.py -v "$(pwd)/src/plugins":/app/plugins -v "$(pwd)/config.yaml":/app/config.yaml -v "$(pwd)/data":/app/data --name ncatbot-container ncatbot-app
 ```
 
 ```bash

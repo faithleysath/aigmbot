@@ -4,14 +4,18 @@ from ncatbot.core.helper.forward_constructor import ForwardConstructor
 from collections import defaultdict
 import asyncio
 
-class ForwarderPlugin(NcatBotPlugin):
-    name = "ForwarderPlugin"
-    version = "1.0.0"
-    description = "自动合并转发群聊消息"
+class MessageCompressorPlugin(NcatBotPlugin):
+    name = "MessageCompressorPlugin"
+    version = "1.0.1"
+    description = "全自动打包压缩群聊消息"
     author = "Cline"
 
     async def on_load(self):
         self.bot_id = None
+        # 注册配置项
+        self.register_config("message_threshold", 33)
+        self.register_config("forward_threshold", 3)
+        
         # 使用 defaultdict 简化缓冲区初始化
         # group_id -> list of GroupMessageEvent
         self.message_buffers = defaultdict(list)
@@ -38,7 +42,7 @@ class ForwarderPlugin(NcatBotPlugin):
         self.message_buffers[group_id].append(event)
 
         # 3. 检查一级合并转发条件
-        if len(self.message_buffers[group_id]) >= 24:
+        if len(self.message_buffers[group_id]) >= self.config["message_threshold"]:
             # 防止并发问题，复制并清空
             messages_to_forward = self.message_buffers[group_id][:]
             self.message_buffers[group_id].clear()
@@ -75,7 +79,7 @@ class ForwarderPlugin(NcatBotPlugin):
             self.forward_buffers[group_id].append(sent_forward_info)
 
             # 检查二级合并转发条件
-            if len(self.forward_buffers[group_id]) >= 4:
+            if len(self.forward_buffers[group_id]) >= self.config["forward_threshold"]:
                 forwards_to_nest = self.forward_buffers[group_id][:]
                 self.forward_buffers[group_id].clear()
                 await self.create_and_send_level_two_forward(group_id, forwards_to_nest)
