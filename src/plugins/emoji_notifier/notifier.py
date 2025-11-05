@@ -1,5 +1,5 @@
-from ncatbot.plugin_system import NcatBotPlugin, on_notice
-from ncatbot.core.event import NoticeEvent
+from ncatbot.plugin_system import NcatBotPlugin, on_notice, command_registry
+from ncatbot.core.event import NoticeEvent, BaseMessageEvent
 from ncatbot.core.event.message_segment import At, Text, Reply, MessageArray
 from ncatbot.utils import get_log
 
@@ -8,11 +8,24 @@ LOG = get_log(__name__)
 class EmojiNotifierPlugin(NcatBotPlugin):
     name = "EmojiNotifierPlugin"
     version = "1.0.0"
-    description = "监听群聊表情回应并发送通知"
+    description = "监听群聊表情回应并发送通知, 并提供一个命令让bot贴表情"
     author = "Cline"
 
     async def on_load(self):
         LOG.info(f"{self.name} 已加载。")
+
+    @command_registry.command("react", description="让bot给当前消息贴上指定emoji")
+    async def react_command(self, event: BaseMessageEvent, emoji_id: str):
+        """处理贴表情命令"""
+        try:
+            # 将 emoji_id 转换为整数
+            int_emoji_id = int(emoji_id)
+            await self.api.set_msg_emoji_like(event.message_id, int_emoji_id)
+        except ValueError:
+            await event.reply("无效的 emoji_id, 请输入数字。")
+        except Exception as e:
+            LOG.error(f"贴表情失败: {e}")
+            await event.reply(f"贴表情失败: {e}")
 
     @on_notice
     async def handle_emoji_like(self, event: NoticeEvent):
