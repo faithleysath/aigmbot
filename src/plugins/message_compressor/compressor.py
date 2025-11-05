@@ -218,11 +218,16 @@ class MessageCompressorPlugin(NcatBotPlugin):
             msg_thresh_str = f"{msg_thresh}{' (全局)' if is_msg_thresh_global else ''}"
             fwd_thresh_str = f"{fwd_thresh}{' (全局)' if is_fwd_thresh_global else ''}"
 
+            # 获取当前缓冲区状态
+            msg_buffer_count = len(self.message_buffers.get(group_id, []))
+            fwd_buffer_count = len(self.forward_buffers.get(group_id, []))
+
             status_text = (
                 f"--- 本群自动打包状态 ---\n"
                 f"功能状态: {'✅ 已启用' if enabled else '❌ 已禁用'}\n"
                 f"一级阈值: {msg_thresh_str} 条消息\n"
                 f"二级阈值: {fwd_thresh_str} 条打包记录\n"
+                f"当前缓存: {msg_buffer_count} 条消息 | {fwd_buffer_count} 条打包记录\n"
                 f"--------------------------"
             )
             if is_msg_thresh_global or is_fwd_thresh_global:
