@@ -80,7 +80,7 @@ class MessageCompressorPlugin(NcatBotPlugin):
         self.message_buffers[group_id].append(event)
 
         # 3. 检查一级合并转发条件
-        message_threshold = self.group_settings[group_id].get("message_threshold", self.config["message_threshold"])
+        message_threshold = int(self.group_settings[group_id].get("message_threshold", self.config["message_threshold"]))
         if len(self.message_buffers[group_id]) >= message_threshold:
             messages_to_forward = self.message_buffers[group_id][:]
             self.message_buffers[group_id].clear()
@@ -122,7 +122,7 @@ class MessageCompressorPlugin(NcatBotPlugin):
             self.forward_buffers[group_id].append(sent_forward_info)
 
             # 检查二级合并转发条件
-            forward_threshold = self.group_settings[group_id].get("forward_threshold", self.config["forward_threshold"])
+            forward_threshold = int(self.group_settings[group_id].get("forward_threshold", self.config["forward_threshold"]))
             if len(self.forward_buffers[group_id]) >= forward_threshold:
                 forwards_to_nest = self.forward_buffers[group_id][:]
                 self.forward_buffers[group_id].clear()
@@ -208,19 +208,27 @@ class MessageCompressorPlugin(NcatBotPlugin):
         elif action == "status":
             settings = self.group_settings[group_id]
             enabled = settings.get("enabled", True)
+
+            is_msg_thresh_global = "message_threshold" not in settings
+            is_fwd_thresh_global = "forward_threshold" not in settings
+
             msg_thresh = settings.get("message_threshold", self.config["message_threshold"])
             fwd_thresh = settings.get("forward_threshold", self.config["forward_threshold"])
+
+            msg_thresh_str = f"{msg_thresh}{' (全局)' if is_msg_thresh_global else ''}"
+            fwd_thresh_str = f"{fwd_thresh}{' (全局)' if is_fwd_thresh_global else ''}"
 
             status_text = (
                 f"--- 本群自动打包状态 ---\n"
                 f"功能状态: {'✅ 已启用' if enabled else '❌ 已禁用'}\n"
-                f"一级阈值: {msg_thresh} 条消息\n"
-                f"二级阈值: {fwd_thresh} 条打包记录\n"
-                f"--------------------------\n"
-                f"提示: 阈值后面带有 '(全局)' 字样表示当前使用的是默认配置。"
+                f"一级阈值: {msg_thresh_str} 条消息\n"
+                f"二级阈值: {fwd_thresh_str} 条打包记录\n"
+                f"--------------------------"
             )
-            await event.reply(status_text.replace(f" {self.config['message_threshold']}", f" {self.config['message_threshold']} (全局)")
-                                     .replace(f" {self.config['forward_threshold']}", f" {self.config['forward_threshold']} (全局)"))
+            if is_msg_thresh_global or is_fwd_thresh_global:
+                status_text += "\n提示: 阈值后面带有 '(全局)' 字样表示当前使用的是默认配置。"
+
+            await event.reply(status_text)
         
         else:
             await event.reply(
