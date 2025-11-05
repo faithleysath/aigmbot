@@ -29,25 +29,29 @@ class AIGamePlugin(NcatBotPlugin):
 
     async def on_load(self):
         """插件加载时执行的初始化操作"""
-        LOG.info(f"{self.name} 正在加载...")
+        LOG.info(f"[{self.name}] 正在加载...")
         
         # 注册配置项
         self.register_config("openai_api_key", "YOUR_API_KEY_HERE")
         self.register_config("openai_base_url", "https://api.openai.com/v1")
         self.register_config("openai_model_name", "gpt-4-turbo")
         self.register_config("system_prompt", "你是一个互动叙事游戏的主持人（GM），故事背景设定在一个末世废土世界。\n你的职责是：\n1. **游戏开局**：首先，你必须要求玩家以自定义回复的形式，提供他们想要扮演的角色信息，例如：姓名、年龄、性别、背景、技能等。\n2. **推进故事**：在收到玩家的角色信息或后续选择后，根据故事进展，为玩家提供明确的、以大写字母（A, B, C...）开头的多个选项。\n3. **引导互动**：玩家将通过投票选择选项或提交自定义回复来决定故事走向。你需要根据他们的选择来动态发展剧情。")
+        LOG.debug(f"[{self.name}] 配置项注册完毕。")
 
         # 初始化数据库
         # NcatBotPlugin 基类提供了 self.data_path，这是一个 Path 对象，指向插件的私有数据目录
         db_path = self.data_path / "aigm.db"
+        LOG.debug(f"[{self.name}] 数据库路径: {db_path}")
         self.db = Database(str(db_path))
         await self.db.connect()
+        LOG.debug(f"[{self.name}] 数据库连接成功。")
 
         # 初始化 LLM API
         try:
             api_key = self.config.get("openai_api_key", "")
             base_url = self.config.get("openai_base_url", "https://api.openai.com/v1")
             model_name = self.config.get("openai_model_name", "gpt-4-turbo")
+            LOG.debug(f"[{self.name}] LLM配置 - API Key: {'*' * (len(api_key) - 4) + api_key[-4:] if api_key != 'YOUR_API_KEY_HERE' else 'Not Set'}, Base URL: {base_url}, Model: {model_name}")
 
             if not isinstance(api_key, str) or not isinstance(base_url, str) or not isinstance(model_name, str):
                 raise TypeError("Config values must be strings.")
@@ -64,7 +68,8 @@ class AIGamePlugin(NcatBotPlugin):
         # 初始化 Markdown 渲染器
         render_output_path = self.data_path / "renders"
         self.renderer = MarkdownRenderer(str(render_output_path))
-        LOG.info(f"{self.name} 加载完成。")
+        LOG.debug(f"[{self.name}] Markdown渲染器初始化，输出路径: {render_output_path}")
+        LOG.info(f"[{self.name}] 加载完成。")
 
     async def on_close(self):
         """插件关闭时执行的操作"""
@@ -75,19 +80,23 @@ class AIGamePlugin(NcatBotPlugin):
     @command_registry.command("aigm", description="开始一场 AI GM 游戏")
     async def start_game_command(self, event: GroupMessageEvent):
         """处理 /aigm 命令，开始新游戏"""
+        LOG.debug(f"[{self.name}] 接到 /aigm 命令，来自群 {event.group_id} 的用户 {event.user_id}")
         if not self.llm_api or not self.db or not self.renderer:
+            LOG.warning(f"[{self.name}] 插件未完全初始化，无法开始游戏。LLM: {bool(self.llm_api)}, DB: {bool(self.db)}, Renderer: {bool(self.renderer)}")
             await event.reply("❌ 插件未完全初始化，无法开始游戏。")
             return
 
         group_id = str(event.group_id)
         
         if not self.db.conn:
+            LOG.error(f"[{self.name}] 数据库未连接，无法检查游戏状态。")
             await event.reply("❌ 数据库未连接，无法检查游戏状态。")
             return
 
         async with self.db.conn.cursor() as cursor:
             await cursor.execute("SELECT status FROM games WHERE group_id = ?", (group_id,))
             game = await cursor.fetchone()
+            LOG.debug(f"[{self.name}] 查询群 {group_id} 的游戏状态: {'无记录' if not game else game[0]}")
             if game and game[0] == 'running':
                 await event.reply("❌ 本群已有一局游戏正在进行中，请先结束或等待当前游戏完成。")
                 return
@@ -103,6 +112,7 @@ class AIGamePlugin(NcatBotPlugin):
 
     async def _start_new_game(self, group_id: str):
         """内部方法，处理新游戏的完整启动流程"""
+        LOG.debug(f"[{self.name}] _start_new_game 调用，群ID: {group_id}")
         if not self.llm_api or not self.db or not self.renderer:
             LOG.error("游戏启动失败：组件未初始化。")
             return
@@ -113,27 +123,38 @@ class AIGamePlugin(NcatBotPlugin):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": "开始"}
         ]
+        LOG.debug(f"[{self.name}] 构建初始消息: {initial_messages}")
 
         # 2. 调用 LLM 获取开场白
+        LOG.debug(f"[{self.name}] 正在调用 LLM 获取开场白...")
         assistant_response = await self.llm_api.get_completion(initial_messages)
         if not assistant_response:
+            LOG.error(f"[{self.name}] LLM 未返回开场白。")
             await self.api.post_group_msg(group_id, text="❌ GM 没有回应，无法开始游戏。")
             return
+        LOG.debug(f"[{self.name}] 收到 LLM 开场白，长度: {len(assistant_response)}")
 
         # 3. 渲染 Markdown 为图片
         image_filename = f"round_{group_id}_{uuid.uuid4()}"
+        LOG.debug(f"[{self.name}] 准备渲染 Markdown 为图片: {image_filename}")
         image_path = await self.renderer.render(assistant_response, image_filename)
         if not image_path:
+            LOG.error(f"[{self.name}] Markdown 渲染失败。")
             await self.api.post_group_msg(group_id, text="❌ 渲染游戏场景失败，无法开始游戏。")
             return
+        LOG.debug(f"[{self.name}] Markdown 渲染成功，图片路径: {image_path}")
             
         # 4. 发送图片
+        LOG.debug(f"[{self.name}] 正在发送场景图片...")
         main_message_id = await self.api.post_group_file(group_id, image=image_path)
         if not main_message_id:
+            LOG.error(f"[{self.name}] 发送场景图片失败。")
             await self.api.post_group_msg(group_id, text="❌ 发送游戏场景失败，无法开始游戏。")
             return
+        LOG.debug(f"[{self.name}] 场景图片发送成功，消息ID: {main_message_id}")
 
         # 5. 贴上表情
+        LOG.debug(f"[{self.name}] 正在为消息 {main_message_id} 贴上表情...")
         # 表情ID来自于你的描述
         emoji_map = {
             'A': 127822, 'B': 9973, 'C': 128663, 'D': 128054,
@@ -151,6 +172,7 @@ class AIGamePlugin(NcatBotPlugin):
             LOG.error("数据库未连接，无法创建游戏记录。")
             await self.api.post_group_msg(group_id, text="❌ 内部错误：数据库连接丢失。")
             return
+        LOG.debug(f"[{self.name}] 准备在数据库中创建/更新游戏记录...")
 
         async with self.db.conn.cursor() as cursor:
             # 检查是否已有游戏，有则更新，无则创建
@@ -160,17 +182,20 @@ class AIGamePlugin(NcatBotPlugin):
             messages_history_json = json.dumps(initial_messages + [{"role": "assistant", "content": assistant_response}])
 
             if game:
+                LOG.debug(f"[{self.name}] 群 {group_id} 已存在游戏记录，更新状态为 'running'。")
                 await cursor.execute(
                     "UPDATE games SET status = ?, messages_history = ?, updated_at = CURRENT_TIMESTAMP WHERE group_id = ?",
                     ("running", messages_history_json, group_id)
                 )
             else:
+                LOG.debug(f"[{self.name}] 群 {group_id} 无游戏记录，创建新记录。")
                 await cursor.execute(
                     "INSERT INTO games (group_id, status, messages_history) VALUES (?, ?, ?)",
                     (group_id, "running", messages_history_json)
                 )
             
             # 创建新的回合记录
+            LOG.debug(f"[{self.name}] 插入新的回合记录 (回合 1)。")
             await cursor.execute(
                 "INSERT INTO rounds (game_group_id, round_number, main_message_id, assistant_response) VALUES (?, ?, ?, ?)",
                 (group_id, 1, main_message_id, assistant_response)
@@ -188,10 +213,11 @@ class AIGamePlugin(NcatBotPlugin):
         reply_segments = event.message.filter(Reply)
         if not reply_segments:
             return
+        
         reply_segment = reply_segments[0]
-
         replied_to_id = reply_segment.id
         group_id = str(event.group_id)
+        LOG.debug(f"[{self.name}] 收到来自群 {group_id} 的回复消息，回复目标ID: {replied_to_id}")
 
         async with self.db.conn.cursor() as cursor:
             # 检查被回复的消息是否是当前游戏回合的主消息
@@ -204,10 +230,12 @@ class AIGamePlugin(NcatBotPlugin):
             round_row = await cursor.fetchone()
 
             if round_row:
+                LOG.debug(f"[{self.name}] 该回复是对当前回合主消息的响应。")
                 round_id = round_row[0]
                 user_id = str(event.user_id)
                 message_id = str(event.message_id)
                 content = "".join(seg.text for seg in event.message.filter_text())
+                LOG.debug(f"[{self.name}] 用户 {user_id} 提交了自定义输入: '{content}'")
 
                 # 将自定义输入存入数据库
                 await cursor.execute(
@@ -219,6 +247,7 @@ class AIGamePlugin(NcatBotPlugin):
                 LOG.info(f"记录了新的自定义输入 from {user_id}: {content}")
 
                 # 为该回复贴上表情
+                LOG.debug(f"[{self.name}] 为自定义输入消息 {message_id} 添加回应表情。")
                 reaction_emojis = [127881, 128560, 10060] # 🎉, 😰, ❌
                 for emoji in reaction_emojis:
                     try:
@@ -246,6 +275,7 @@ class AIGamePlugin(NcatBotPlugin):
         if event.emoji_like_id is None:
             return
         emoji_id = int(event.emoji_like_id)
+        LOG.debug(f"[{self.name}] 收到表情回应: group={group_id}, user={user_id}, msg={message_id}, emoji={emoji_id}")
 
         # 定义管理员操作的表情
         admin_action_emojis = {127881: 'confirm', 128560: 'deny', 10060: 'retract_game'}
@@ -255,7 +285,9 @@ class AIGamePlugin(NcatBotPlugin):
         try:
             # 检查是否是管理员操作
             is_admin = await self._is_group_admin(group_id, user_id)
+            LOG.debug(f"[{self.name}] 用户 {user_id} 的管理员状态: {is_admin}")
             if is_admin and emoji_id in admin_action_emojis:
+                LOG.debug(f"[{self.name}] 检测到管理员 {user_id} 的操作，表情ID: {emoji_id}")
                 # 检查表情是否贴在当前回合的主消息上
                 async with self.db.conn.cursor() as cursor:
                     await cursor.execute(
@@ -263,7 +295,9 @@ class AIGamePlugin(NcatBotPlugin):
                         (group_id, message_id)
                     )
                     if await cursor.fetchone():
+                        LOG.debug(f"[{self.name}] 管理员操作的目标是当前回合的主消息。")
                         action = admin_action_emojis[emoji_id]
+                        LOG.info(f"[{self.name}] 执行管理员操作: {action}")
                         if action == 'confirm':
                             await self._handle_confirm(group_id, message_id)
                         elif action == 'deny':
@@ -274,6 +308,7 @@ class AIGamePlugin(NcatBotPlugin):
 
             # 检查是否是用户撤回自己的自定义输入
             if emoji_id == input_retract_emoji:
+                LOG.debug(f"[{self.name}] 检测到撤回自定义输入的操作，表情ID: {emoji_id}")
                 async with self.db.conn.cursor() as cursor:
                     # 检查表情是否贴在某个自定义输入上，并且操作者是该输入的作者或管理员
                     await cursor.execute(
@@ -281,6 +316,7 @@ class AIGamePlugin(NcatBotPlugin):
                     )
                     row = await cursor.fetchone()
                     if row and (user_id == str(row[0]) or is_admin):
+                        LOG.info(f"[{self.name}] 用户 {user_id} 正在撤回自定义输入 (消息ID: {message_id})。")
                         await self._handle_retract_input(group_id, message_id)
 
         except Exception as e:
@@ -297,6 +333,7 @@ class AIGamePlugin(NcatBotPlugin):
 
     async def _tally_votes(self, group_id: str, main_message_id: str) -> tuple[dict, str]:
         """统计一轮投票的结果，返回分数和格式化的结果字符串"""
+        LOG.debug(f"[{self.name}] 开始计票，群ID: {group_id}, 主消息ID: {main_message_id}")
         if not self.db or not self.db.conn:
             raise RuntimeError("Database not connected.")
 
@@ -304,6 +341,7 @@ class AIGamePlugin(NcatBotPlugin):
         result_lines = ["🗳️ 投票结果统计："]
         
         # 1. 统计 A-G 选项的票数
+        LOG.debug(f"[{self.name}] 正在统计预设选项的票数...")
         option_emoji_map = {
             127822: 'A', 9973: 'B', 128663: 'C', 128054: 'D',
             127859: 'E', 128293: 'F', 128123: 'G'
@@ -311,14 +349,17 @@ class AIGamePlugin(NcatBotPlugin):
         for emoji_id, option in option_emoji_map.items():
             try:
                 reactors = await self.api.fetch_emoji_like(main_message_id, emoji_id, emoji_type=1)
+                # 减1是为了排除机器人自己添加的表情
                 count = len(reactors.get('emojiLikesList', [])) - 1
                 if count > 0:
                     scores[option] = count
                     result_lines.append(f"- 选项 {option}: {count} 票")
+                    LOG.debug(f"[{self.name}] 选项 {option} (emoji: {emoji_id}) 获得 {count} 票。")
             except Exception as e:
                 LOG.warning(f"获取表情 {emoji_id} 反应失败: {e}")
 
         # 2. 统计自定义输入的票数
+        LOG.debug(f"[{self.name}] 正在统计自定义输入的票数...")
         async with self.db.conn.cursor() as cursor:
             await cursor.execute(
                 """SELECT ci.message_id, ci.content, ci.user_id FROM custom_inputs ci
@@ -338,9 +379,11 @@ class AIGamePlugin(NcatBotPlugin):
                 net_score = yay_count - nay_count
                 scores[f"custom_{msg_id}"] = {"score": net_score, "content": content, "user_id": user_id}
                 result_lines.append(f"- 自定义输入 (来自 @{user_id}): \"{content[:20]}...\" - 净得票: {net_score}")
+                LOG.debug(f"[{self.name}] 自定义输入 '{content[:20]}...' (msg_id: {msg_id}) 净得票: {net_score} (赞成: {yay_count}, 反对: {nay_count})")
             except Exception as e:
                 LOG.warning(f"获取自定义输入 {msg_id} 反应失败: {e}")
-                
+        
+        LOG.debug(f"[{self.name}] 计票完成。Scores: {scores}")
         return scores, "\n".join(result_lines)
 
     async def _handle_confirm(self, group_id: str, message_id: str):
@@ -352,6 +395,7 @@ class AIGamePlugin(NcatBotPlugin):
         await self.api.post_group_msg(group_id, text=result_text, reply=message_id)
 
         if not scores:
+            LOG.warning(f"[{self.name}] 计票结果为空，本轮无效。")
             await self.api.post_group_msg(group_id, text="无人投票，本轮无效，请重新开始或由管理员继续。")
             return
 
@@ -375,8 +419,10 @@ class AIGamePlugin(NcatBotPlugin):
                 winning_content.append(f"选择选项 {winner}")
         
         user_choice_text = " & ".join(winning_content)
+        LOG.info(f"[{self.name}] 最终胜出的选择是: '{user_choice_text}'")
 
         async with self.db.conn.cursor() as cursor:
+            LOG.debug(f"[{self.name}] 从数据库检索当前消息历史...")
             await cursor.execute("SELECT messages_history FROM games WHERE group_id = ?", (group_id,))
             game_row = await cursor.fetchone()
             if not game_row: return
@@ -384,13 +430,16 @@ class AIGamePlugin(NcatBotPlugin):
             messages_history = json.loads(game_row[0])
             messages_history.append({"role": "user", "content": user_choice_text})
             
+            LOG.debug(f"[{self.name}] 调用 LLM 获取下一轮内容...")
             new_assistant_response = await self.llm_api.get_completion(messages_history)
             if not new_assistant_response:
+                LOG.error(f"[{self.name}] LLM 未返回下一轮内容，游戏中断。")
                 await self.api.post_group_msg(group_id, text="❌ GM 没有回应，游戏中断。")
                 return
             
             messages_history.append({"role": "assistant", "content": new_assistant_response})
             
+            LOG.debug(f"[{self.name}] 更新数据库中的消息历史...")
             await cursor.execute("UPDATE games SET messages_history = ? WHERE group_id = ?", (json.dumps(messages_history), group_id))
             await self.db.conn.commit()
 
@@ -400,6 +449,7 @@ class AIGamePlugin(NcatBotPlugin):
         """处理否决操作"""
         LOG.info(f"群 {group_id} 管理员否决了投票 (消息: {message_id})")
         _, result_text = await self._tally_votes(group_id, message_id)
+        LOG.debug(f"[{self.name}] 生成的计票文本: {result_text}")
         announcement = result_text + "\n\n**由于管理员的一票否决，本次投票作废，将重新开始本轮投票。**"
         await self.api.post_group_msg(group_id, text=announcement, reply=message_id)
 
@@ -418,14 +468,16 @@ class AIGamePlugin(NcatBotPlugin):
         await self.api.post_group_msg(group_id, text="**管理员执行了悔棋操作，游戏将回退到上一轮。**", reply=message_id)
 
         async with self.db.conn.cursor() as cursor:
+            LOG.debug(f"[{self.name}] 正在从数据库回退消息历史...")
             await cursor.execute("SELECT messages_history FROM games WHERE group_id = ?", (group_id,))
             row = await cursor.fetchone()
             if not row: return
             
             messages_history = json.loads(row[0])
             if len(messages_history) >= 2:
-                messages_history.pop()
-                messages_history.pop()
+                messages_history.pop() # 移除上一轮的 assistant 回复
+                messages_history.pop() # 移除上一轮的 user 选择
+                LOG.debug(f"[{self.name}] 消息历史已回退，当前长度: {len(messages_history)}")
 
             await cursor.execute("UPDATE games SET messages_history = ? WHERE group_id = ?", (json.dumps(messages_history), group_id))
             await self.db.conn.commit()
@@ -437,6 +489,7 @@ class AIGamePlugin(NcatBotPlugin):
     async def _handle_retract_input(self, group_id: str, message_id: str):
         """处理自定义输入的撤回"""
         if not self.db or not self.db.conn: return
+        LOG.debug(f"[{self.name}] 正在数据库中标记自定义输入 {message_id} 为已撤回。")
         async with self.db.conn.cursor() as cursor:
             await cursor.execute("UPDATE custom_inputs SET is_retracted = 1 WHERE message_id = ?", (message_id,))
             await self.db.conn.commit()
@@ -446,19 +499,26 @@ class AIGamePlugin(NcatBotPlugin):
 
     async def _start_next_round(self, group_id: str, assistant_response: str):
         """开启一个新回合的通用函数"""
+        LOG.debug(f"[{self.name}] 正在开启新回合，群ID: {group_id}")
         if not self.renderer or not self.db or not self.db.conn: return
 
         image_filename = f"round_{group_id}_{uuid.uuid4()}"
+        LOG.debug(f"[{self.name}] 渲染新场景图片: {image_filename}")
         image_path = await self.renderer.render(assistant_response, image_filename)
         if not image_path:
+            LOG.error(f"[{self.name}] 渲染新场景失败。")
             await self.api.post_group_msg(group_id, text="❌ 渲染新场景失败，游戏中断。")
             return
-            
+        
+        LOG.debug(f"[{self.name}] 发送新场景图片...")
         main_message_id = await self.api.post_group_file(group_id, image=image_path)
         if not main_message_id:
+            LOG.error(f"[{self.name}] 发送新场景失败。")
             await self.api.post_group_msg(group_id, text="❌ 发送新场景失败，游戏中断。")
             return
+        LOG.debug(f"[{self.name}] 新场景图片发送成功，消息ID: {main_message_id}")
 
+        LOG.debug(f"[{self.name}] 为新主消息 {main_message_id} 贴上表情...")
         emoji_map = {
             'A': 127822, 'B': 9973, 'C': 128663, 'D': 128054,
             'E': 127859, 'F': 128293, 'G': 128123,
@@ -474,6 +534,7 @@ class AIGamePlugin(NcatBotPlugin):
             await cursor.execute("SELECT MAX(round_number) FROM rounds WHERE game_group_id = ?", (group_id,))
             max_round = await cursor.fetchone()
             next_round_number = (max_round[0] or 0) + 1 if max_round else 1
+            LOG.debug(f"[{self.name}] 数据库中记录新回合，回合号: {next_round_number}")
             
             await cursor.execute(
                 "INSERT INTO rounds (game_group_id, round_number, main_message_id, assistant_response) VALUES (?, ?, ?, ?)",
