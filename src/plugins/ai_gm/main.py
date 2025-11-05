@@ -3,7 +3,7 @@ import json
 import uuid
 from pathlib import Path
 
-from ncatbot.plugin_system import NcatBotPlugin, command_registry, on_notice
+from ncatbot.plugin_system import NcatBotPlugin, command_registry, on_notice, filter_registry
 from ncatbot.core.event import GroupMessageEvent, NoticeEvent
 from ncatbot.core.event.message_segment import Reply
 from ncatbot.utils import get_log
@@ -204,6 +204,7 @@ class AIGamePlugin(NcatBotPlugin):
         
         LOG.info(f"群 {group_id} 的新游戏已成功开始，主消息 ID: {main_message_id}")
 
+    @filter_registry.group_filter
     async def on_group_message(self, event: GroupMessageEvent):
         """处理群聊消息，主要用于捕获对游戏主消息的回复"""
         if not self.db or not self.db.conn:
@@ -340,6 +341,10 @@ class AIGamePlugin(NcatBotPlugin):
         scores = {}
         result_lines = ["🗳️ 投票结果统计："]
         
+        # 获取机器人自己的 ID 以便排除
+        bot_info = await self.api.get_login_info()
+        bot_id = str(bot_info.user_id)
+        
         # 1. 统计 A-G 选项的票数
         LOG.debug(f"[{self.name}] 正在统计预设选项的票数...")
         option_emoji_map = {
@@ -348,9 +353,12 @@ class AIGamePlugin(NcatBotPlugin):
         }
         for emoji_id, option in option_emoji_map.items():
             try:
-                reactors = await self.api.fetch_emoji_like(main_message_id, emoji_id, emoji_type=1)
-                # 减1是为了排除机器人自己添加的表情
-                count = len(reactors.get('emojiLikesList', [])) - 1
+                reactors_data = await self.api.fetch_emoji_like(main_message_id, emoji_id, emoji_type=1)
+                reactors = reactors_data.get('emojiLikesList', [])
+                # 排除机器人自己
+                actual_reactors = [r for r in reactors if str(r.get('tinyId')) != bot_id]
+                count = len(actual_reactors)
+                
                 if count > 0:
                     scores[option] = count
                     result_lines.append(f"- 选项 {option}: {count} 票")
