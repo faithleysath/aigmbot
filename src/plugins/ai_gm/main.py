@@ -311,7 +311,7 @@ class AIGamePlugin(NcatBotPlugin):
         for emoji_id, option in option_emoji_map.items():
             try:
                 reactors = await self.api.fetch_emoji_like(main_message_id, emoji_id, emoji_type=1)
-                count = len(reactors.get('emojiLikesList', []))
+                count = len(reactors.get('emojiLikesList', [])) - 1
                 if count > 0:
                     scores[option] = count
                     result_lines.append(f"- 选项 {option}: {count} 票")
