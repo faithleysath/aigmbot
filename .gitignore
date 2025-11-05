@@ -220,3 +220,5 @@ logs/
 
 # config files
 config.yaml
+
+.ncatbot
