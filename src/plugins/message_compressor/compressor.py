@@ -1,4 +1,3 @@
-from typing import Optional
 from ncatbot.plugin_system import NcatBotPlugin, on_message, command_registry, group_filter
 from ncatbot.core.event import GroupMessageEvent
 from ncatbot.core.helper.forward_constructor import ForwardConstructor
@@ -164,7 +163,7 @@ class MessageCompressorPlugin(NcatBotPlugin):
 
     @group_filter
     @command_registry.command("compressor", description="管理自动打包压缩功能")
-    async def compressor_main_command(self, event: GroupMessageEvent, action: str, val1: Optional[str] = None, val2: Optional[str] = None):
+    async def compressor_main_command(self, event: GroupMessageEvent, action: str, val1: str = "", val2: str = ""):
         if not await self._is_group_admin(event):
             await event.reply("抱歉，只有群管理员或群主才能使用此命令。")
             return
@@ -182,7 +181,7 @@ class MessageCompressorPlugin(NcatBotPlugin):
             await event.reply("❌ 在本群已禁用自动打包压缩功能。")
 
         elif action == "threshold":
-            if val1 is None or val2 is None:
+            if not val1 or not val2:
                 await event.reply("❌ 参数不足，请提供两个有效的数字作为阈值。\n用法: /compressor threshold <消息数> <转发数>")
                 return
             try:
