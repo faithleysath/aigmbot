@@ -20,8 +20,8 @@ class AIGamePlugin(NcatBotPlugin):
     description = "一个基于 AI GM 的互动叙事游戏插件"
     author = "Cline"
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.db: Database | None = None
         self.llm_api: LLM_API | None = None
         self.renderer: MarkdownRenderer | None = None
