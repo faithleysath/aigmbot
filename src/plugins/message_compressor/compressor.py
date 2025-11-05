@@ -4,6 +4,7 @@ from ncatbot.core.helper.forward_constructor import ForwardConstructor
 from ncatbot.utils import get_log
 from collections import defaultdict
 import asyncio
+import json
 
 LOG = get_log(__name__)
 
@@ -22,6 +23,16 @@ class MessageCompressorPlugin(NcatBotPlugin):
         
         # 用于存储每个群的特定设置, a dict that will be persisted automatically
         self.register_config("group_settings", {})
+
+        # 配置文件健壮性修复
+        if isinstance(self.config.get("group_settings"), str):
+            try:
+                # 尝试将字符串解析为字典
+                self.config["group_settings"] = json.loads(self.config["group_settings"].replace("'", "\""))
+            except (json.JSONDecodeError, TypeError):
+                # 如果解析失败，则重置为默认值
+                self.config["group_settings"] = {}
+                LOG.warning("group_settings 配置格式错误，已重置为默认值。")
 
         # 使用 defaultdict 简化缓冲区初始化
         self.message_buffers = defaultdict(list)
@@ -176,6 +187,9 @@ class MessageCompressorPlugin(NcatBotPlugin):
     @group_filter
     @command_registry.command("compressor", description="管理自动打包压缩功能")
     async def compressor_main_command(self, event: GroupMessageEvent, action: str, val1: str = "", val2: str = ""):
+        # 首次接收消息时，记录 bot 的 ID
+        if self.bot_id is None:
+            self.bot_id = event.self_id
         if not await self._is_group_admin(event):
             await event.reply("抱歉，只有群管理员或群主才能使用此命令。")
             return
