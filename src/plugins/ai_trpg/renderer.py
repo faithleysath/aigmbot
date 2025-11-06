@@ -1,6 +1,7 @@
 from markdown_it import MarkdownIt
 from playwright.async_api import async_playwright
 from ncatbot.utils import get_log
+import asyncio
 
 LOG = get_log(__name__)
 
@@ -10,12 +11,16 @@ class MarkdownRenderer:
         self.md = MarkdownIt("commonmark").disable("html_block").disable("html_inline")
         self._p = None
         self._browser = None
+        self._init_lock = asyncio.Lock()
 
     async def _ensure_browser(self):
         if self._browser:
             return self._browser
-        self._p = await async_playwright().start()
-        self._browser = await self._p.chromium.launch()
+        async with self._init_lock:
+            if self._browser:
+                return self._browser
+            self._p = await async_playwright().start()
+            self._browser = await self._p.chromium.launch()
         return self._browser
 
     async def close(self):
@@ -84,6 +89,7 @@ class MarkdownRenderer:
 
             browser = await self._ensure_browser()
             page = await browser.new_page()
+            await page.set_viewport_size({"width": 1000, "height": 10})
             await page.set_content(html_with_style)
 
             # 截图 body 元素以获得准确的内容尺寸

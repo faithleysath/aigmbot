@@ -729,6 +729,7 @@ class AITRPGPlugin(NcatBotPlugin):
             return
 
         channel_id = None
+        main_message_id = None
         try:
             await self.db.set_game_frozen_status(game_id, True)
 
@@ -813,33 +814,52 @@ class AITRPGPlugin(NcatBotPlugin):
                 return
 
             # 5. 数据库操作
-            async with self.db.conn.cursor() as cursor:
-                await cursor.execute(
-                    "SELECT tip_round_id FROM branches WHERE branch_id = ?",
-                    (head_branch_id,),
-                )
-                latest_tip_data = await cursor.fetchone()
-                if not latest_tip_data or latest_tip_data[0] != initial_tip_round_id:
-                    await self.api.post_group_msg(
-                        channel_id,
-                        text="本轮状态已变化，为避免并发冲突本次推进已取消。",
-                        reply=main_message_id,
+            async with self.db.transaction():
+                async with self.db.conn.cursor() as cursor:
+                    await cursor.execute(
+                        "SELECT tip_round_id FROM branches WHERE branch_id = ?",
+                        (head_branch_id,),
                     )
-                    return
+                    latest_tip_data = await cursor.fetchone()
+                    if (
+                        not latest_tip_data
+                        or latest_tip_data[0] != initial_tip_round_id
+                    ):
+                        raise RuntimeError("TIP_CHANGED")
 
-            new_round_id = await self.db.create_round(
-                game_id, initial_tip_round_id, winner_content, new_assistant_response
-            )
-            if not new_round_id:
-                raise Exception("创建新 round 失败")
+                    # 创建新回合
+                    await cursor.execute(
+                        "INSERT INTO rounds (game_id, parent_id, player_choice, assistant_response) VALUES (?, ?, ?, ?)",
+                        (
+                            game_id,
+                            initial_tip_round_id,
+                            winner_content,
+                            new_assistant_response,
+                        ),
+                    )
+                    new_round_id = cursor.lastrowid
 
-            await self.db.update_branch_tip(head_branch_id, new_round_id)
+                    # 更新 tip
+                    await cursor.execute(
+                        "UPDATE branches SET tip_round_id = ? WHERE branch_id = ?",
+                        (new_round_id, head_branch_id),
+                    )
 
             # 6. 清理并进入下一轮
             self.vote_cache[channel_id] = {}
             await self._save_cache_to_disk()
             await self.checkout_head(game_id)
 
+        except RuntimeError as e:
+            if str(e) == "TIP_CHANGED":
+                if channel_id and main_message_id:
+                    await self.api.post_group_msg(
+                        channel_id,
+                        text="本轮状态已变化，为避免并发冲突本次推进已取消。",
+                        reply=main_message_id,
+                    )
+            else:
+                LOG.error(f"推进失败: {e}", exc_info=True)
         finally:
             if self.db:
                 await self.db.set_game_frozen_status(game_id, False)

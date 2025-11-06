@@ -1,5 +1,6 @@
 import aiosqlite
 from ncatbot.utils import get_log
+from contextlib import asynccontextmanager
 
 LOG = get_log(__name__)
 
@@ -14,6 +15,9 @@ class Database:
         try:
             self.conn = await aiosqlite.connect(self.db_path)
             self.conn.row_factory = aiosqlite.Row
+            await self.conn.execute("PRAGMA journal_mode=WAL;")
+            await self.conn.execute("PRAGMA synchronous=NORMAL;")
+            await self.conn.execute("PRAGMA foreign_keys = ON;")
             await self.init_db()
             LOG.info(f"成功连接并初始化数据库: {self.db_path}")
         except Exception as e:
@@ -33,9 +37,6 @@ class Database:
             return
 
         async with self.conn.cursor() as cursor:
-            # 启用外键约束
-            await cursor.execute("PRAGMA foreign_keys = ON;")
-
             # 创建 games 表
             await cursor.execute(
                 """
@@ -126,9 +127,24 @@ class Database:
             await cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_rounds_game ON rounds(game_id);"
             )
+            await cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_rounds_parent ON rounds(parent_id);"
+            )
 
         if self.conn:
             await self.conn.commit()
+
+    @asynccontextmanager
+    async def transaction(self):
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+        try:
+            await self.conn.execute("BEGIN IMMEDIATE;")
+            yield
+            await self.conn.commit()
+        except Exception:
+            await self.conn.rollback()
+            raise
 
     async def is_game_running(self, channel_id: str) -> bool:
         """检查指定频道当前是否有正在进行的游戏"""

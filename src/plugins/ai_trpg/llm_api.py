@@ -1,8 +1,8 @@
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from ncatbot.utils import get_log
-import asyncio
-from openai import APIStatusError
+import asyncio, random
+from openai import APIStatusError, RateLimitError, APIConnectionError, APITimeoutError
 
 LOG = get_log(__name__)
 
@@ -15,6 +15,7 @@ class LLM_API:
         self.client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
+            timeout=30.0,
         )
         self.model_name = model_name
 
@@ -27,7 +28,7 @@ class LLM_API:
         :param messages: 对话历史列表，格式为 [{"role": "user", "content": "..."}, ...]
         :return: 一个元组，包含 (AI 返回的内容字符串, usage 字典)，如果出错则返回 (None, None)
         """
-        max_retries = 3
+        max_retries = 4
         base_delay = 1.0  # seconds
 
         for attempt in range(max_retries):
@@ -49,16 +50,30 @@ class LLM_API:
                         "total_tokens": getattr(response.usage, "total_tokens", None),
                     }
                 return content, usage
-            except APIStatusError as e:
-                if e.status_code >= 500 and attempt < max_retries - 1:
-                    delay = base_delay * (2**attempt)
+            except (
+                RateLimitError,
+                APITimeoutError,
+                APIConnectionError,
+                APIStatusError,
+            ) as e:
+                retriable = (
+                    isinstance(e, RateLimitError)
+                    or isinstance(e, APITimeoutError)
+                    or isinstance(e, APIConnectionError)
+                    or (
+                        isinstance(e, APIStatusError)
+                        and getattr(e, "status_code", 500) >= 500
+                    )
+                )
+                if retriable and attempt < max_retries - 1:
+                    delay = base_delay * (2**attempt) + random.uniform(0, 0.5)
                     LOG.warning(
-                        f"LLM API 返回服务器错误 (状态码 {e.status_code})。将在 {delay:.2f} 秒后重试..."
+                        f"LLM 调用失败（{e.__class__.__name__}），第 {attempt+1} 次重试，等待 {delay:.2f}s ..."
                     )
                     await asyncio.sleep(delay)
-                else:
-                    LOG.error(f"调用 OpenAI API 时出错: {e}")
-                    raise
+                    continue
+                LOG.error(f"调用 OpenAI API 时出错: {e}")
+                raise
             except Exception as e:
                 LOG.error(f"调用 OpenAI API 时出现意外错误: {e}")
                 raise
