@@ -4,6 +4,7 @@ from ncatbot.core.event.message_segment import File
 from ncatbot.utils import get_log
 from pathlib import Path
 import aiohttp
+from datetime import datetime, timedelta
 
 from .db import Database
 from .llm_api import LLM_API
@@ -30,6 +31,7 @@ class AITRPGPlugin(NcatBotPlugin):
         self.llm_api: LLM_API | None = None
         self.renderer: MarkdownRenderer | None = None
         self.data_path: Path = Path()
+        self.pending_new_games: dict[str, dict] = {} # key是message_id，value是{"user_id": str, "system_prompt": str, "file_id": str, create_time: datetime}
 
     async def on_load(self):
         """插件加载时执行的初始化操作"""
@@ -76,38 +78,80 @@ class AITRPGPlugin(NcatBotPlugin):
     async def listen_file_message(self, event: GroupMessageEvent):
         """监听群文件消息，检查是否是.txt或.md文件"""
         files = event.message.filter(File)
-        LOG.debug(f"收到文件消息，文件列表: {files}")
         if not files:
-            LOG.debug("没有找到文件，忽略该消息。")
             return
-        # 取第一个文件
+
         file = files[0]
         if not file.file.endswith((".txt", ".md")):
-            LOG.debug(f"文件类型不支持: {file.file}，忽略该文件。")
             return
+
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(file.url) as response:
-                    if response.status == 200:
-                        content = await response.text()
-                        preview = content[:2000]
-                        LOG.debug(f"文件预览内容:\n{preview}")
-                        # 交给markdown渲染器处理，或直接输出预览
-                        if self.renderer:
-                            LOG.debug("使用Markdown渲染器生成预览图片。")
-                            img: bytes | None = await self.renderer.render(preview)
-                            if img:
-                                LOG.debug("图片渲染成功，发送图片预览。")
-                                await event.reply(image=f"data:image/png;base64,{bytes_to_base64(img)}", at=False)
-                            else:
-                                LOG.debug("图片渲染失败，发送文本预览。")
-                                await event.reply(f"文件预览:\n\n{preview}", at=False)
-                        else:
-                            LOG.debug("没有Markdown渲染器，发送文本预览。")
-                            await event.reply(f"文件预览:\n\n{preview}", at=False)
-                    else:
-                        LOG.warning(f"下载文件预览失败，状态码: {response.status}")
-                        await event.reply("无法获取文件预览。", at=False)
+                    if response.status != 200:
+                        await event.reply("无法获取文件内容。", at=False)
+                        return
+                    content = await response.text()
+
+            preview = content[:2000]
+            img: bytes | None = None
+            if self.renderer:
+                img = await self.renderer.render(preview)
+
+            reply_message_id = None
+            if img:
+                reply_message_id = await event.reply(image=f"data:image/png;base64,{bytes_to_base64(img)}", at=False)
+            else:
+                reply_message_id = await event.reply(f"文件预览:\n\n{preview}", at=False)
+
+            if not reply_message_id:
+                return
+
+            if self.db and await self.db.is_game_running(str(event.group_id)):
+                await self.api.set_msg_emoji_like(reply_message_id, "9749")
+            else:
+                await self.api.set_msg_emoji_like(reply_message_id, "127881")
+                self.pending_new_games[reply_message_id] = {
+                    "user_id": event.user_id,
+                    "system_prompt": content,
+                    "file_id": file.file_id,
+                    "create_time": datetime.now(),
+                    "group_id": event.group_id,
+                }
         except Exception as e:
-            LOG.error(f"下载或读取文件预览时出错: {e}")
-            await event.reply("无法获取文件预览。", at=False)
+            LOG.error(f"处理文件消息时出错: {e}")
+            await event.reply("处理文件时出错。", at=False)
+
+    @on_notice
+    async def on_emoji_like(self, event: NoticeEvent):
+            
+        if event.notice_type != "group_msg_emoji_like":
+            return
+
+        # Clean up expired pending games
+        now = datetime.now()
+        expired_games = [
+            msg_id for msg_id, game_data in self.pending_new_games.items()
+            if now - game_data["create_time"] > timedelta(minutes=5)
+        ]
+        for msg_id in expired_games:
+            del self.pending_new_games[msg_id]
+
+        if not event.message_id:
+            return
+
+        pending_game = self.pending_new_games.get(event.message_id)
+        if not pending_game:
+            return
+
+        if pending_game["user_id"] != event.user_id:
+            return
+
+        if event.emoji_like_id == "9749":
+            try:
+                await self.api.delete_group_file(pending_game["group_id"], pending_game["file_id"])
+                LOG.info(f"用户 {event.user_id} 取消了游戏 {event.message_id}，文件 {pending_game['file_id']} 已删除。")
+            except Exception as e:
+                LOG.error(f"删除群文件失败: {e}")
+            finally:
+                del self.pending_new_games[event.message_id]

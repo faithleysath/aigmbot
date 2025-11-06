@@ -100,3 +100,13 @@ class Database:
 
         if self.conn:
             await self.conn.commit()
+
+    async def is_game_running(self, channel_id: str) -> bool:
+        """检查指定频道当前是否有正在进行的游戏"""
+        if not self.conn:
+            LOG.error("数据库未连接，无法查询游戏状态。")
+            return False
+        async with self.conn.cursor() as cursor:
+            await cursor.execute("SELECT 1 FROM games WHERE channel_id = ?", (channel_id,))
+            result = await cursor.fetchone()
+            return result is not None
