@@ -14,6 +14,18 @@ from .renderer import MarkdownRenderer
 
 LOG = get_log(__name__)
 
+EMOJI = {
+    # 主贴选项
+    "A": 127822, "B": 9973, "C": 128663, "D": 128054,
+    "E": 127859, "F": 128293, "G": 128123,
+    # 管理员确认/否决（主贴）
+    "CONFIRM": 9989,   # ✅
+    "DENY": 10060,     # ❌
+    # 自定义输入投票
+    "YAY": 127881,     # 🎉
+    "NAY": 128560,     # 😰
+}
+
 import base64
 
 def bytes_to_base64(b: bytes) -> str:
@@ -119,11 +131,12 @@ class AITRPGPlugin(NcatBotPlugin):
                 return
 
             if self.db and await self.db.is_game_running(str(event.group_id)):
-                await self.api.set_msg_emoji_like(reply_message_id, "9749") # 游戏进行中，显示取消按钮
+                await self.api.set_msg_emoji_like(reply_message_id, str(EMOJI["DENY"]))      # 取消
             else:
-                await self.api.set_msg_emoji_like(reply_message_id, "127881") # 无游戏，显示确认按钮
+                await self.api.set_msg_emoji_like(reply_message_id, str(EMOJI["CONFIRM"]))  # 确认
             
-            self.pending_new_games[reply_message_id] = {
+            key = str(reply_message_id)
+            self.pending_new_games[key] = {
                 "user_id": event.user_id,
                 "system_prompt": content,
                 "message_id": event.message_id,
@@ -204,11 +217,11 @@ class AITRPGPlugin(NcatBotPlugin):
         group_id = str(event.group_id)
         message_id = str(event.message_id)
 
-        if event.emoji_like_id == "9749": # 取消
+        if event.emoji_like_id == str(EMOJI["DENY"]):   # 取消
             try:
                 await self.api.delete_msg(pending_game["message_id"])
-                await self.api.set_msg_emoji_like(message_id, "127881", set=False)
-                await self.api.set_msg_emoji_like(message_id, "9749")
+                await self.api.set_msg_emoji_like(message_id, str(EMOJI["CONFIRM"]), set=False)
+                await self.api.set_msg_emoji_like(message_id, str(EMOJI["DENY"]))
                 await self.api.post_group_msg(group_id, " 新游戏创建已取消。", at=event.user_id, reply=message_id)
                 LOG.info(f"用户 {event.user_id} 取消了新游戏创建请求。")
             except Exception as e:
@@ -216,15 +229,15 @@ class AITRPGPlugin(NcatBotPlugin):
             finally:
                 del self.pending_new_games[message_id]
 
-        elif event.emoji_like_id == "127881": # 确认
+        elif event.emoji_like_id == str(EMOJI["CONFIRM"]):  # 确认
             if self.db and await self.db.is_game_running(group_id):
                 await self.api.post_group_msg(group_id, " 当前已有正在进行的游戏，无法创建新游戏。", at=event.user_id, reply=message_id)
-                await self.api.set_msg_emoji_like(message_id, "9749")
-                await self.api.set_msg_emoji_like(message_id, "127881", set=False)
+                await self.api.set_msg_emoji_like(message_id, str(EMOJI["DENY"]))
+                await self.api.set_msg_emoji_like(message_id, str(EMOJI["CONFIRM"]), set=False)
                 return
             
-            await self.api.set_msg_emoji_like(message_id, "127881")
-            await self.api.set_msg_emoji_like(message_id, "9749", set=False)
+            await self.api.set_msg_emoji_like(message_id, str(EMOJI["CONFIRM"]))
+            await self.api.set_msg_emoji_like(message_id, str(EMOJI["DENY"]), set=False)
             del self.pending_new_games[message_id]
             
             await self.start_new_game(
@@ -372,9 +385,9 @@ class AITRPGPlugin(NcatBotPlugin):
 
             # 5. 添加表情回应
             emoji_map = {
-                'A': 127822, 'B': 9973, 'C': 128663, 'D': 128054,
-                'E': 127859, 'F': 128293, 'G': 128123,
-                'Confirm': 127881, 'Deny': 10060
+                'A': EMOJI["A"], 'B': EMOJI["B"], 'C': EMOJI["C"], 'D': EMOJI["D"],
+                'E': EMOJI["E"], 'F': EMOJI["F"], 'G': EMOJI["G"],
+                'Confirm': EMOJI["CONFIRM"], 'Deny': EMOJI["DENY"]
             }
             for _, emoji_id in emoji_map.items():
                 try:
@@ -409,20 +422,20 @@ class AITRPGPlugin(NcatBotPlugin):
         is_admin_or_host = await self._is_group_admin_or_host(group_id, user_id)
         if is_admin_or_host:
             # 确认或否决回合
-            if emoji_id in [127881, 10060]: # ✅ or ❌
+            if emoji_id in [EMOJI["CONFIRM"], EMOJI["DENY"]]:
                 async with self.db.conn.cursor() as cursor:
                     await cursor.execute("SELECT game_id FROM games WHERE main_message_id = ?", (message_id,))
                     game = await cursor.fetchone()
                     if game:
-                        if emoji_id == 127881: # ✅
+                        if emoji_id == EMOJI["CONFIRM"]:
                             await self._tally_and_advance(game[0])
-                        else: # ❌
+                        else:
                             await self.api.post_group_msg(group_id, text="本轮投票已被管理员/主持人作废，将重新开始本轮。", reply=message_id)
                             await self.checkout_head(game[0])
                         return
 
         # 检查是否是撤回自定义输入
-        if emoji_id == 10060: # ❌ (沿用旧版表情作为撤回)
+        if emoji_id == EMOJI["DENY"]: # ❌ (沿用旧版表情作为撤回)
             async with self.db.conn.cursor() as cursor:
                 await cursor.execute("SELECT game_id, candidate_custom_input_ids FROM games WHERE channel_id = ?", (group_id,))
                 game = await cursor.fetchone()
@@ -456,8 +469,8 @@ class AITRPGPlugin(NcatBotPlugin):
         
         # 预设选项
         option_emojis = {
-            127822: 'A', 9973: 'B', 128663: 'C', 128054: 'D',
-            127859: 'E', 128293: 'F', 128123: 'G'
+            EMOJI["A"]: 'A', EMOJI["B"]: 'B', EMOJI["C"]: 'C', EMOJI["D"]: 'D',
+            EMOJI["E"]: 'E', EMOJI["F"]: 'F', EMOJI["G"]: 'G'
         }
         main_votes = self.vote_cache.get(str(main_message_id), {})
         for emoji, option in option_emojis.items():
@@ -470,8 +483,8 @@ class AITRPGPlugin(NcatBotPlugin):
         candidate_ids = json.loads(candidate_ids_json)
         for cid in candidate_ids:
             input_votes = self.vote_cache.get(cid, {})
-            yay = len(input_votes.get(127881, set())) # 🎉
-            nay = len(input_votes.get(128560, set())) # 😰
+            yay = len(input_votes.get(EMOJI["YAY"], set()))
+            nay = len(input_votes.get(EMOJI["NAY"], set()))
             net_score = yay - nay
             scores[cid] = net_score
             # 为了显示内容，需要获取消息
@@ -515,6 +528,13 @@ class AITRPGPlugin(NcatBotPlugin):
             branch_data = await cursor.fetchone()
             if not branch_data: return
             current_round_id = branch_data[0]
+
+            # 版本校验
+            await cursor.execute("SELECT tip_round_id FROM branches WHERE branch_id = ?", (head_branch_id,))
+            tip_now_data = await cursor.fetchone()
+            if not tip_now_data or tip_now_data[0] != current_round_id:
+                await self.api.post_group_msg(channel_id, text="本轮状态已变化，为避免并发冲突本次推进已取消。", reply=main_message_id)
+                return
 
             history = []
             while current_round_id != -1:
