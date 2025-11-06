@@ -61,7 +61,7 @@ class Database:
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(game_id, name),
                     FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE,
-                    FOREIGN KEY (tip_round_id) REFERENCES rounds (round_id) ON DELETE CASCADE
+                    FOREIGN KEY (tip_round_id) REFERENCES rounds (round_id) ON DELETE SET NULL
                 );
             """)
 
@@ -70,7 +70,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS rounds (
                     round_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     game_id INTEGER NOT NULL,
-                    parent_id INTEGER NOT NULL,
+                    parent_id INTEGER NOT NULL CHECK(parent_id >= -1),
                     player_choice TEXT NOT NULL,
                     assistant_response TEXT NOT NULL,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -83,6 +83,7 @@ class Database:
                 CREATE TRIGGER IF NOT EXISTS update_game_updated_at
                 AFTER UPDATE ON games
                 FOR EACH ROW
+                WHEN NEW.updated_at = OLD.updated_at
                 BEGIN
                     UPDATE games SET updated_at = CURRENT_TIMESTAMP WHERE game_id = OLD.game_id;
                 END;
@@ -93,10 +94,17 @@ class Database:
                 CREATE TRIGGER IF NOT EXISTS update_branch_updated_at
                 AFTER UPDATE ON branches
                 FOR EACH ROW
+                WHEN NEW.updated_at = OLD.updated_at
                 BEGIN
                     UPDATE branches SET updated_at = CURRENT_TIMESTAMP WHERE branch_id = OLD.branch_id;
                 END;
             """)
+
+            # 创建索引
+            await cursor.execute("CREATE INDEX IF NOT EXISTS idx_games_channel ON games(channel_id);")
+            await cursor.execute("CREATE INDEX IF NOT EXISTS idx_games_main_msg ON games(main_message_id);")
+            await cursor.execute("CREATE INDEX IF NOT EXISTS idx_branches_game ON branches(game_id);")
+            await cursor.execute("CREATE INDEX IF NOT EXISTS idx_rounds_game ON rounds(game_id);")
 
         if self.conn:
             await self.conn.commit()

@@ -1,6 +1,5 @@
 from ncatbot.plugin_system import NcatBotPlugin, command_registry, on_notice, filter_registry
 from typing import cast
-from ncatbot.plugin_system import NcatBotPlugin, command_registry, on_notice, filter_registry
 from ncatbot.core.event import GroupMessageEvent, NoticeEvent
 from ncatbot.core.event.message_segment import File, Reply
 from ncatbot.utils import get_log
@@ -17,9 +16,9 @@ LOG = get_log(__name__)
 
 import base64
 
-def bytes_to_base64(bytes: bytes) -> str:
+def bytes_to_base64(b: bytes) -> str:
     """将字节数据转换为Base64字符串"""
-    return base64.b64encode(bytes).decode('utf-8')
+    return base64.b64encode(b).decode('utf-8')
 
 
 class AITRPGPlugin(NcatBotPlugin):
@@ -178,7 +177,7 @@ class AITRPGPlugin(NcatBotPlugin):
             return
 
         # 检查是否是待处理的新游戏
-        if event.message_id in self.pending_new_games:
+        if str(event.message_id) in self.pending_new_games:
             await self._handle_new_game_confirmation(event)
             return
         
@@ -486,9 +485,6 @@ class AITRPGPlugin(NcatBotPlugin):
         if not scores:
             await self.api.post_group_msg(channel_id, text="无人投票，本轮无效。")
             return
-
-        # 找出胜利者
-        winner_id = max(scores, key=lambda k: scores[k])
 
         # 找出胜利者
         winner_id = max(scores, key=lambda k: scores[k])
