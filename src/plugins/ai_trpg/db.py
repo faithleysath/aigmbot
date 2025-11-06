@@ -184,6 +184,16 @@ class Database:
             )
             return await cursor.fetchone()
 
+    async def get_game_by_game_id(self, game_id: int):
+        """通过 game_id 获取游戏信息"""
+        if not self.conn:
+            return None
+        async with self.conn.cursor() as cursor:
+            await cursor.execute(
+                "SELECT * FROM games WHERE game_id = ?", (game_id,)
+            )
+            return await cursor.fetchone()
+
     async def set_game_frozen_status(self, game_id: int, is_frozen: bool):
         """设置游戏的冻结状态"""
         if not self.conn:
