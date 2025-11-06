@@ -26,6 +26,62 @@ class CacheManager:
         self._cache_lock = asyncio.Lock()  # 保护内存缓存并发
         self._last_save_ts = 0.0
 
+    # --- Pending Games ---
+    async def add_pending_game(self, message_id: str, game_data: dict):
+        async with self._cache_lock:
+            self.pending_new_games[message_id] = game_data
+        await self.save_to_disk()
+
+    async def get_pending_game(self, message_id: str) -> dict | None:
+        async with self._cache_lock:
+            return self.pending_new_games.get(message_id)
+
+    async def remove_pending_game(self, message_id: str):
+        async with self._cache_lock:
+            self.pending_new_games.pop(message_id, None)
+        await self.save_to_disk()
+
+    # --- Vote Cache ---
+    async def update_vote(
+        self, group_id: str, message_id: str, emoji_id: str, user_id: str, is_add: bool
+    ):
+        async with self._cache_lock:
+            group_cache = self.vote_cache.setdefault(group_id, {})
+            message_votes = group_cache.setdefault(message_id, {"votes": {}})
+            if "votes" not in message_votes:
+                message_votes["votes"] = {}
+            vote_set = message_votes["votes"].setdefault(emoji_id, set())
+            if is_add:
+                vote_set.add(user_id)
+            else:
+                vote_set.discard(user_id)
+        await self.save_to_disk()
+
+    async def set_custom_input_content(
+        self, group_id: str, message_id: str, content: str
+    ):
+        async with self._cache_lock:
+            group_cache = self.vote_cache.setdefault(group_id, {})
+            entry = group_cache.setdefault(message_id, {"votes": {}})
+            entry["content"] = content
+        await self.save_to_disk(force=True)
+
+    async def get_vote_item(
+        self, group_id: str, message_id: str
+    ) -> VoteCacheItem | None:
+        async with self._cache_lock:
+            return self.vote_cache.get(group_id, {}).get(message_id)
+
+    async def get_group_vote_cache(self, group_id: str) -> dict[str, VoteCacheItem]:
+        async with self._cache_lock:
+            return self.vote_cache.get(group_id, {})
+
+    async def clear_group_vote_cache(self, group_id: str):
+        async with self._cache_lock:
+            if group_id in self.vote_cache:
+                self.vote_cache[group_id] = {}
+        await self.save_to_disk()
+
     async def load_from_disk(self):
         """从磁盘加载缓存文件"""
         if not self.cache_path or not await aio_os.path.exists(str(self.cache_path)):

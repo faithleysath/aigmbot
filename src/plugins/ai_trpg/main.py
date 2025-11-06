@@ -58,14 +58,16 @@ class AITRPGPlugin(NcatBotPlugin):
         # 3. 初始化LLM API
         try:
             api_key = self.config.get("openai_api_key", "")
+            if not api_key or api_key == "YOUR_API_KEY_HERE":
+                raise ValueError("OpenAI API key is not configured.")
             base_url = self.config.get("openai_base_url", "https://api.openai.com/v1")
             model_name = self.config.get("openai_model_name", "gpt-4-turbo")
             self.llm_api = LLM_API(
                 api_key=api_key, base_url=base_url, model_name=model_name
             )
         except ValueError as e:
-            LOG.error(f"LLM API 初始化失败: {e}. 请检查相关配置。")
-            self.llm_api = None
+            LOG.error(f"LLM API 初始化失败: {e}")
+            raise  # 阻止插件加载
 
         # 4. 初始化渲染器
         self.renderer = MarkdownRenderer()

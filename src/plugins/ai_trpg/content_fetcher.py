@@ -14,20 +14,16 @@ class ContentFetcher:
 
     async def get_custom_input_content(self, group_id: str, message_id: str) -> str:
         """获取自定义输入消息的内容，优先从缓存读取，否则通过API获取并更新缓存"""
-        # 确保是引用对象，而不是临时副本
-        group_vote_cache = self.cache_manager.vote_cache.setdefault(group_id, {})
-        item_cache = group_vote_cache.get(message_id, {})
-        content = item_cache.get("content", "")
+        item_cache = await self.cache_manager.get_vote_item(group_id, message_id)
+        content = item_cache.get("content", "") if item_cache else ""
 
         if not content:
             try:
                 msg_event = await self.api.get_msg(message_id)
                 content = "".join(s.text for s in msg_event.message.filter_text())
-                # 统一用 setdefault，避免 KeyError 并确保写回
-                entry = group_vote_cache.setdefault(message_id, {"votes": {}})
-                entry["content"] = content
-                # 自定义输入内容写回可考虑强制落盘，避免丢失
-                await self.cache_manager.save_to_disk(force=True)
+                await self.cache_manager.set_custom_input_content(
+                    group_id, message_id, content
+                )
             except Exception as e:
                 LOG.warning(f"获取消息 {message_id} 内容失败: {e}")
                 content = f"自定义输入 (ID: {message_id})"

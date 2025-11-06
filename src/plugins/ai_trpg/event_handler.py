@@ -88,15 +88,15 @@ class EventHandler:
                     reply_message_id, str(EMOJI["CONFIRM"])
                 )  # 确认
 
-            key = str(reply_message_id)
-            async with self.cache_manager._cache_lock:
-                self.cache_manager.pending_new_games[key] = {
+            await self.cache_manager.add_pending_game(
+                str(reply_message_id),
+                {
                     "user_id": event.user_id,
                     "system_prompt": content,
                     "message_id": event.message_id,
                     "create_time": datetime.now(timezone.utc),
-                }
-            await self.cache_manager.save_to_disk()
+                },
+            )
         except Exception as e:
             LOG.error(f"处理文件消息时出错: {e}", exc_info=True)
             await event.reply("处理文件时出错。", at=False)
@@ -135,13 +135,9 @@ class EventHandler:
         )
 
         # 将内容添加到缓存
-        async with self.cache_manager._cache_lock:
-            group_vote_cache = self.cache_manager.vote_cache.setdefault(group_id, {})
-            group_vote_cache[custom_input_message_id] = {
-                "content": custom_input_content,
-                "votes": {},
-            }
-        await self.cache_manager.save_to_disk()
+        await self.cache_manager.set_custom_input_content(
+            group_id, custom_input_message_id, custom_input_content
+        )
 
         LOG.info(f"游戏 {game_id} 收到新的自定义输入: {custom_input_message_id}")
 
@@ -164,28 +160,26 @@ class EventHandler:
         ):
             return
 
-        # 检查是否是待处理的新游戏
-        if str(event.message_id) in self.cache_manager.pending_new_games:
-            await self._handle_new_game_confirmation(event)
+        pending_game = await self.cache_manager.get_pending_game(str(event.message_id))
+        if pending_game:
+            await self._handle_new_game_confirmation(event, pending_game)
             return
 
         # 检查是否是游戏中的表情回应
         await self._handle_game_reaction(event)
 
-    async def _handle_new_game_confirmation(self, event: NoticeEvent):
+    async def _handle_new_game_confirmation(
+        self, event: NoticeEvent, pending_game: dict
+    ):
         """处理新游戏创建的表情确认"""
         message_id_str = str(event.message_id)
-        pending_game = self.cache_manager.pending_new_games.get(message_id_str)
-        if not pending_game:
-            return
 
         # 清理过期的请求
         timeout_minutes = self.config.get("pending_game_timeout", 5)
         if datetime.now(timezone.utc) - pending_game["create_time"] > timedelta(
             minutes=timeout_minutes
         ):
-            del self.cache_manager.pending_new_games[message_id_str]
-            await self.cache_manager.save_to_disk()
+            await self.cache_manager.remove_pending_game(message_id_str)
             return
 
         # 权限检查：只有发起人可以确认或取消
@@ -214,8 +208,7 @@ class EventHandler:
             except Exception as e:
                 LOG.error(f"处理取消新游戏时出错: {e}")
             finally:
-                del self.cache_manager.pending_new_games[message_id_str]
-                await self.cache_manager.save_to_disk()
+                await self.cache_manager.remove_pending_game(message_id_str)
 
         elif emoji_id == str(EMOJI["CONFIRM"]):  # 确认
             if self.db and await self.db.is_game_running(group_id):
@@ -239,8 +232,7 @@ class EventHandler:
             await self.api.set_msg_emoji_like(
                 message_id_str, str(EMOJI["COFFEE"]), set=False
             )
-            del self.cache_manager.pending_new_games[message_id_str]
-            await self.cache_manager.save_to_disk()
+            await self.cache_manager.remove_pending_game(message_id_str)
 
             await self.game_manager.start_new_game(
                 group_id=group_id,
@@ -285,9 +277,7 @@ class EventHandler:
                 reply=main_message_id,
             )
             if self.cache_manager:
-                async with self.cache_manager._cache_lock:
-                    self.cache_manager.vote_cache[group_id] = {}  # 清理本轮投票缓存
-                await self.cache_manager.save_to_disk()
+                await self.cache_manager.clear_group_vote_cache(group_id)
             if self.game_manager:
                 await self.game_manager.checkout_head(game_id)
         elif emoji_id == str(EMOJI["RETRACT"]):
@@ -316,11 +306,9 @@ class EventHandler:
         )
         # 从缓存中删除
         if self.cache_manager:
-            async with self.cache_manager._cache_lock:
-                group_map = self.cache_manager.vote_cache.get(group_id)
-                if group_map is not None:
-                    group_map.pop(message_id, None)
-            await self.cache_manager.save_to_disk()
+            group_cache = await self.cache_manager.get_group_vote_cache(group_id)
+            if message_id in group_cache:
+                await self.cache_manager.clear_group_vote_cache(group_id)
 
     async def _handle_game_reaction(self, event: NoticeEvent):
         """处理游戏进行中的表情回应，包括投票、撤回和管理员操作"""
@@ -351,17 +339,9 @@ class EventHandler:
 
         # 更新投票缓存
         if self.cache_manager:
-            async with self.cache_manager._cache_lock:
-                group_vote_cache = self.cache_manager.vote_cache.setdefault(group_id, {})
-                message_votes = group_vote_cache.setdefault(message_id, {"votes": {}})
-                if "votes" not in message_votes:
-                    message_votes["votes"] = {}
-                vote_set = message_votes["votes"].setdefault(emoji_id, set())
-                if event.is_add:
-                    vote_set.add(user_id)
-                else:
-                    vote_set.discard(user_id)
-            await self.cache_manager.save_to_disk()
+            await self.cache_manager.update_vote(
+                group_id, message_id, emoji_id, user_id, event.is_add or False
+            )
 
         # 检查是否是管理员或主持人
         is_admin_or_host = await self._is_group_admin_or_host(group_id, user_id)
@@ -385,7 +365,7 @@ class EventHandler:
         scores: dict[str, int] = {}
         result_lines = ["🗳️ 投票结果统计："]
 
-        group_vote_cache = self.cache_manager.vote_cache.get(group_id, {})
+        group_vote_cache = await self.cache_manager.get_group_vote_cache(group_id)
 
         option_emojis = {
             EMOJI["A"]: "A",

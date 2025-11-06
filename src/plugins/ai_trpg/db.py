@@ -197,11 +197,12 @@ class Database:
         """设置游戏的冻结状态"""
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(
-                "UPDATE games SET is_frozen = ? WHERE game_id = ?", (is_frozen, game_id)
-            )
-            await self.conn.commit()
+        async with self.transaction():
+            async with self.conn.cursor() as cursor:
+                await cursor.execute(
+                    "UPDATE games SET is_frozen = ? WHERE game_id = ?",
+                    (is_frozen, game_id),
+                )
 
     async def update_candidate_custom_input_ids(
         self, game_id: int, candidate_ids_json: str
@@ -209,12 +210,12 @@ class Database:
         """更新候选自定义输入ID"""
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(
-                "UPDATE games SET candidate_custom_input_ids = ? WHERE game_id = ?",
-                (candidate_ids_json, game_id),
-            )
-            await self.conn.commit()
+        async with self.transaction():
+            async with self.conn.cursor() as cursor:
+                await cursor.execute(
+                    "UPDATE games SET candidate_custom_input_ids = ? WHERE game_id = ?",
+                    (candidate_ids_json, game_id),
+                )
 
     async def get_host_user_id(self, channel_id: str) -> str | None:
         """获取游戏主持人ID"""
@@ -233,15 +234,15 @@ class Database:
         """创建新游戏并返回 game_id"""
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(
-                "INSERT INTO games (channel_id, host_user_id, system_prompt) VALUES (?, ?, ?)",
-                (channel_id, user_id, system_prompt),
-            )
-            await self.conn.commit()
-            if cursor.lastrowid is None:
-                raise RuntimeError("插入游戏数据失败")
-            return cursor.lastrowid
+        async with self.transaction():
+            async with self.conn.cursor() as cursor:
+                await cursor.execute(
+                    "INSERT INTO games (channel_id, host_user_id, system_prompt) VALUES (?, ?, ?)",
+                    (channel_id, user_id, system_prompt),
+                )
+                if cursor.lastrowid is None:
+                    raise RuntimeError("插入游戏数据失败")
+                return cursor.lastrowid
 
     async def create_round(
         self, game_id: int, parent_id: int, player_choice: str, assistant_response: str
@@ -249,15 +250,15 @@ class Database:
         """创建新回合并返回 round_id"""
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(
-                "INSERT INTO rounds (game_id, parent_id, player_choice, assistant_response) VALUES (?, ?, ?, ?)",
-                (game_id, parent_id, player_choice, assistant_response),
-            )
-            await self.conn.commit()
-            if cursor.lastrowid is None:
-                raise RuntimeError("插入回合数据失败")
-            return cursor.lastrowid
+        async with self.transaction():
+            async with self.conn.cursor() as cursor:
+                await cursor.execute(
+                    "INSERT INTO rounds (game_id, parent_id, player_choice, assistant_response) VALUES (?, ?, ?, ?)",
+                    (game_id, parent_id, player_choice, assistant_response),
+                )
+                if cursor.lastrowid is None:
+                    raise RuntimeError("插入回合数据失败")
+                return cursor.lastrowid
 
     async def create_branch(
         self, game_id: int, name: str, tip_round_id: int
@@ -265,26 +266,26 @@ class Database:
         """创建新分支并返回 branch_id"""
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(
-                "INSERT INTO branches (game_id, name, tip_round_id) VALUES (?, ?, ?)",
-                (game_id, name, tip_round_id),
-            )
-            await self.conn.commit()
-            if cursor.lastrowid is None:
-                raise RuntimeError("插入分支数据失败")
-            return cursor.lastrowid
+        async with self.transaction():
+            async with self.conn.cursor() as cursor:
+                await cursor.execute(
+                    "INSERT INTO branches (game_id, name, tip_round_id) VALUES (?, ?, ?)",
+                    (game_id, name, tip_round_id),
+                )
+                if cursor.lastrowid is None:
+                    raise RuntimeError("插入分支数据失败")
+                return cursor.lastrowid
 
     async def update_game_head_branch(self, game_id: int, branch_id: int):
         """更新游戏的 head_branch_id"""
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(
-                "UPDATE games SET head_branch_id = ? WHERE game_id = ?",
-                (branch_id, game_id),
-            )
-            await self.conn.commit()
+        async with self.transaction():
+            async with self.conn.cursor() as cursor:
+                await cursor.execute(
+                    "UPDATE games SET head_branch_id = ? WHERE game_id = ?",
+                    (branch_id, game_id),
+                )
 
     async def get_game_and_head_branch_info(self, game_id: int):
         """获取游戏和 head 分支信息"""
@@ -315,28 +316,28 @@ class Database:
         """更新游戏的主消息ID"""
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(
-                "UPDATE games SET main_message_id = ?, candidate_custom_input_ids = '[]' WHERE game_id = ?",
-                (main_message_id, game_id),
-            )
-            await self.conn.commit()
+        async with self.transaction():
+            async with self.conn.cursor() as cursor:
+                await cursor.execute(
+                    "UPDATE games SET main_message_id = ?, candidate_custom_input_ids = '[]' WHERE game_id = ?",
+                    (main_message_id, game_id),
+                )
 
     async def update_branch_tip(self, branch_id: int, round_id: int):
         """更新分支的 tip_round_id (用于推进或回退)"""
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(
-                "UPDATE branches SET tip_round_id = ? WHERE branch_id = ?",
-                (round_id, branch_id),
-            )
-            await self.conn.commit()
+        async with self.transaction():
+            async with self.conn.cursor() as cursor:
+                await cursor.execute(
+                    "UPDATE branches SET tip_round_id = ? WHERE branch_id = ?",
+                    (round_id, branch_id),
+                )
 
     async def delete_game(self, game_id: int):
         """删除游戏"""
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute("DELETE FROM games WHERE game_id = ?", (game_id,))
-            await self.conn.commit()
+        async with self.transaction():
+            async with self.conn.cursor() as cursor:
+                await cursor.execute("DELETE FROM games WHERE game_id = ?", (game_id,))

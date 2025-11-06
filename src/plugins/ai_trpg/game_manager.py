@@ -285,9 +285,7 @@ class GameManager:
                     )
 
             # 6. 清理并进入下一轮
-            async with self.cache_manager._cache_lock:
-                self.cache_manager.vote_cache[channel_id] = {}
-            await self.cache_manager.save_to_disk()
+            await self.cache_manager.clear_group_vote_cache(channel_id)
             await self.checkout_head(game_id)
 
         except TipChangedError:
@@ -347,9 +345,7 @@ class GameManager:
             )
 
             if self.cache_manager:
-                async with self.cache_manager._cache_lock:
-                    self.cache_manager.vote_cache[str(channel_id)] = {}
-                await self.cache_manager.save_to_disk()
+                await self.cache_manager.clear_group_vote_cache(str(channel_id))
 
             # 5. 刷新游戏界面
             await self.checkout_head(game_id)
