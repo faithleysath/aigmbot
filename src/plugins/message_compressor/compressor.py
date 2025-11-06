@@ -40,8 +40,6 @@ class MessageCompressorPlugin(NcatBotPlugin):
         self.forward_buffers = defaultdict(list)
         self.admin_status_cache = {}
 
-    # The _load_group_settings, _save_group_settings, and on_close methods
-    # are no longer needed as the framework handles config persistence automatically.
 
     async def _fetch_bot_admin_status(self, group_id: str) -> bool:
         """强制从 API 获取机器人是否为群管理员或群主，并更新缓存。"""
