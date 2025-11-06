@@ -8,8 +8,6 @@ from typing import TypedDict, NotRequired
 
 from ncatbot.utils import get_log
 
-from .utils import _normalize_emoji_id
-
 LOG = get_log(__name__)
 
 
@@ -53,7 +51,7 @@ class CacheManager:
 
                         if "votes" in data:
                             item["votes"] = {
-                                _normalize_emoji_id(k): set(v)
+                                str(k): set(v)
                                 for k, v in data["votes"].items()
                             }
                         self.vote_cache[group_id][msg_id] = item
@@ -67,10 +65,16 @@ class CacheManager:
             return
         try:
             # 准备待序列化的数据
-            serializable_pending = {
-                key: {**game, "create_time": game["create_time"].isoformat()}
-                for key, game in self.pending_new_games.items()
-            }
+            serializable_pending = {}
+            for key, game in self.pending_new_games.items():
+                # Copy game data to avoid modifying the original dict
+                game_data = game.copy()
+                if "create_time" in game_data and isinstance(
+                    game_data["create_time"], datetime
+                ):
+                    game_data["create_time"] = game_data["create_time"].isoformat()
+                serializable_pending[key] = game_data
+
             serializable_votes = {
                 group_id: {
                     msg_id: {

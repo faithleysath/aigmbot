@@ -138,7 +138,9 @@ class GameManager:
             ]
             for emoji_id in emoji_list:
                 try:
-                    await self.api.set_msg_emoji_like(main_message_id, emoji_id)
+                    await self.api.set_msg_emoji_like(
+                        main_message_id, str(emoji_id)
+                    )
                 except Exception as e:
                     LOG.warning(f"为消息 {main_message_id} 贴表情 {emoji_id} 失败: {e}")
 
@@ -153,12 +155,12 @@ class GameManager:
 
     async def _build_llm_history(
         self, system_prompt: str, tip_round_id: int
-    ) -> list[dict] | None:
+    ) -> list[ChatCompletionMessageParam] | None:
         """从数据库构建用于 LLM 的对话历史"""
         if not self.db:
             return None
 
-        history: list[dict] = []
+        history: list[ChatCompletionMessageParam] = []
         current_round_id = tip_round_id
         while current_round_id != -1:
             round_data = await self.db.get_round_info(current_round_id)
@@ -170,7 +172,9 @@ class GameManager:
             history.append({"role": "user", "content": round_data["player_choice"]})
             current_round_id = round_data["parent_id"]
 
-        messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        messages: list[ChatCompletionMessageParam] = [
+            {"role": "system", "content": system_prompt}
+        ]
         messages.extend(reversed(history))
         return messages
 

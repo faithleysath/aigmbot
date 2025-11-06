@@ -2,7 +2,6 @@
 import json
 from datetime import datetime, timedelta, timezone
 import aiohttp
-from typing import Any
 
 from ncatbot.core.event import GroupMessageEvent, NoticeEvent
 from ncatbot.core.event.message_segment import File, Reply, At
@@ -13,7 +12,7 @@ from .db import Database
 from .cache import CacheManager
 from .game_manager import GameManager
 from .renderer import MarkdownRenderer
-from .utils import EMOJI, _normalize_emoji_id, bytes_to_base64
+from .utils import EMOJI, bytes_to_base64
 from .content_fetcher import ContentFetcher
 
 LOG = get_log(__name__)
@@ -148,7 +147,7 @@ class EventHandler:
         for emoji_key in ["YAY", "NAY", "CANCEL"]:
             try:
                 await self.api.set_msg_emoji_like(
-                    custom_input_message_id, EMOJI[emoji_key]
+                    custom_input_message_id, str(EMOJI[emoji_key])
                 )
             except Exception as e:
                 LOG.warning(
@@ -192,16 +191,16 @@ class EventHandler:
             return
 
         group_id = str(event.group_id)
-        emoji_id = _normalize_emoji_id(event.emoji_like_id)
+        emoji_id = str(event.emoji_like_id)
 
-        if emoji_id == _normalize_emoji_id(EMOJI["COFFEE"]):  # 频道繁忙
+        if emoji_id == str(EMOJI["COFFEE"]):  # 频道繁忙
             try:
                 await self.api.delete_msg(pending_game["message_id"])
                 await self.api.set_msg_emoji_like(
-                    message_id_str, _normalize_emoji_id(EMOJI["CONFIRM"]), set=False
+                    message_id_str, str(EMOJI["CONFIRM"]), set=False
                 )
                 await self.api.set_msg_emoji_like(
-                    message_id_str, _normalize_emoji_id(EMOJI["COFFEE"])
+                    message_id_str, str(EMOJI["COFFEE"])
                 )
                 await self.api.post_group_msg(
                     group_id,
@@ -216,7 +215,7 @@ class EventHandler:
                 del self.cache_manager.pending_new_games[message_id_str]
                 await self.cache_manager.save_to_disk()
 
-        elif emoji_id == _normalize_emoji_id(EMOJI["CONFIRM"]):  # 确认
+        elif emoji_id == str(EMOJI["CONFIRM"]):  # 确认
             if self.db and await self.db.is_game_running(group_id):
                 await self.api.post_group_msg(
                     group_id,
@@ -225,18 +224,18 @@ class EventHandler:
                     reply=message_id_str,
                 )
                 await self.api.set_msg_emoji_like(
-                    message_id_str, _normalize_emoji_id(EMOJI["COFFEE"])
+                    message_id_str, str(EMOJI["COFFEE"])
                 )
                 await self.api.set_msg_emoji_like(
-                    message_id_str, _normalize_emoji_id(EMOJI["CONFIRM"]), set=False
+                    message_id_str, str(EMOJI["CONFIRM"]), set=False
                 )
                 return
 
             await self.api.set_msg_emoji_like(
-                message_id_str, _normalize_emoji_id(EMOJI["CONFIRM"])
+                message_id_str, str(EMOJI["CONFIRM"])
             )
             await self.api.set_msg_emoji_like(
-                message_id_str, _normalize_emoji_id(EMOJI["COFFEE"]), set=False
+                message_id_str, str(EMOJI["COFFEE"]), set=False
             )
             del self.cache_manager.pending_new_games[message_id_str]
             await self.cache_manager.save_to_disk()
@@ -275,7 +274,7 @@ class EventHandler:
         group_id = str(event.group_id)
         user_id = str(event.user_id)
         message_id = str(event.message_id)
-        emoji_id = _normalize_emoji_id(event.emoji_like_id)
+        emoji_id = str(event.emoji_like_id)
 
         if not self.db:
             return
@@ -318,10 +317,10 @@ class EventHandler:
         # 处理管理员/主持人往main_message_id上贴表情的行为
         if message_id == str(main_message_id) and is_admin_or_host:
             # 判断三种操作
-            if emoji_id == _normalize_emoji_id(EMOJI["CONFIRM"]):
+            if emoji_id == str(EMOJI["CONFIRM"]):
                 await self._tally_and_advance(int(game_id))
                 return
-            elif emoji_id == _normalize_emoji_id(EMOJI["DENY"]):
+            elif emoji_id == str(EMOJI["DENY"]):
                 _, result_lines = await self._tally_votes(
                     group_id, str(main_message_id), candidate_ids_json
                 )
@@ -335,7 +334,7 @@ class EventHandler:
                 await self.cache_manager.save_to_disk()
                 await self.game_manager.checkout_head(int(game_id))
                 return
-            elif emoji_id == _normalize_emoji_id(EMOJI["RETRACT"]):
+            elif emoji_id == str(EMOJI["RETRACT"]):
                 await self.game_manager.revert_last_round(int(game_id))
                 return
 
@@ -343,7 +342,7 @@ class EventHandler:
         if (
             message_id in candidate_ids
             and is_admin_or_host
-            and emoji_id == _normalize_emoji_id(EMOJI["CANCEL"])
+            and emoji_id == str(EMOJI["CANCEL"])
         ):
             candidate_ids.remove(message_id)
             await self.db.update_candidate_custom_input_ids(
@@ -378,7 +377,7 @@ class EventHandler:
         }
         main_votes_cache = group_vote_cache.get(main_message_id, {}).get("votes", {})
         for emoji, option in option_emojis.items():
-            count = len(main_votes_cache.get(_normalize_emoji_id(emoji), set()))
+            count = len(main_votes_cache.get(str(emoji), set()))
             if count > 0:
                 scores[option] = count
                 result_lines.append(f"- 选项 {option}: {count} 票")
@@ -387,8 +386,8 @@ class EventHandler:
         for cid in candidate_ids:
             item_cache = group_vote_cache.get(cid, {})
             input_votes = item_cache.get("votes", {})
-            yay = len(input_votes.get(_normalize_emoji_id(EMOJI["YAY"]), set()))
-            nay = len(input_votes.get(_normalize_emoji_id(EMOJI["NAY"]), set()))
+            yay = len(input_votes.get(str(EMOJI["YAY"]), set()))
+            nay = len(input_votes.get(str(EMOJI["NAY"]), set()))
             net_score = yay - nay
             scores[cid] = net_score
 

@@ -28,8 +28,3 @@ EMOJI = {
 def bytes_to_base64(b: bytes) -> str:
     """将字节数据转换为Base64字符串"""
     return base64.b64encode(b).decode("utf-8")
-
-
-def _normalize_emoji_id(emoji_id: Any) -> str:
-    """将表情ID统一转换为字符串"""
-    return str(emoji_id)
