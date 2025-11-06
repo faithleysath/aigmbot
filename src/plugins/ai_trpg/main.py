@@ -34,7 +34,8 @@ class AITRPGPlugin(NcatBotPlugin):
         self.llm_api: LLM_API | None = None
         self.renderer: MarkdownRenderer | None = None
         self.data_path: Path = Path()
-        self.pending_new_games: dict[str, dict] = {} # key是message_id，value是{"user_id": str, "system_prompt": str, "message_id": str, create_time: datetime}
+        self.pending_new_games: dict[str, dict] = {}
+        self.vote_cache: dict[str, dict[int, set[str]]] = {}
 
     async def on_load(self):
         """插件加载时执行的初始化操作"""
@@ -181,8 +182,8 @@ class AITRPGPlugin(NcatBotPlugin):
             await self._handle_new_game_confirmation(event)
             return
         
-        # 后续处理游戏中的表情回应...
-        # ... (第四步的代码将在这里实现)
+        # 检查是否是游戏中的表情回应
+        await self._handle_game_reaction(event)
     
     async def _handle_new_game_confirmation(self, event: NoticeEvent):
         """处理新游戏创建的表情确认"""
@@ -388,3 +389,179 @@ class AITRPGPlugin(NcatBotPlugin):
             
             if channel_id_str:
                 await self.api.post_group_msg(channel_id_str, text=f"❌ 更新游戏状态失败: {e}")
+
+    async def _handle_game_reaction(self, event: NoticeEvent):
+        """处理游戏进行中的表情回应，包括投票、撤回和管理员操作"""
+        if not self.db or not self.db.conn or not event.message_id or not event.emoji_like_id:
+            return
+
+        group_id = str(event.group_id)
+        user_id = str(event.user_id)
+        message_id = str(event.message_id)
+        emoji_id = int(event.emoji_like_id)
+
+        # 更新投票缓存
+        if event.is_add:
+            self.vote_cache.setdefault(message_id, {}).setdefault(emoji_id, set()).add(user_id)
+        elif message_id in self.vote_cache and emoji_id in self.vote_cache[message_id]:
+            self.vote_cache[message_id][emoji_id].discard(user_id)
+
+        # 检查是否是管理员/主持人操作
+        is_admin_or_host = await self._is_group_admin_or_host(group_id, user_id)
+        if is_admin_or_host:
+            # 确认或否决回合
+            if emoji_id in [127881, 10060]: # ✅ or ❌
+                async with self.db.conn.cursor() as cursor:
+                    await cursor.execute("SELECT game_id FROM games WHERE main_message_id = ?", (message_id,))
+                    game = await cursor.fetchone()
+                    if game:
+                        if emoji_id == 127881: # ✅
+                            await self._tally_and_advance(game[0])
+                        else: # ❌
+                            await self.api.post_group_msg(group_id, text="本轮投票已被管理员/主持人作废，将重新开始本轮。", reply=message_id)
+                            await self.checkout_head(game[0])
+                        return
+
+        # 检查是否是撤回自定义输入
+        if emoji_id == 128465: # 🗑️
+            async with self.db.conn.cursor() as cursor:
+                await cursor.execute("SELECT game_id, candidate_custom_input_ids FROM games WHERE channel_id = ?", (group_id,))
+                game = await cursor.fetchone()
+                if game:
+                    game_id, candidate_ids_json = game
+                    candidate_ids = json.loads(candidate_ids_json)
+                    if message_id in candidate_ids:
+                        # 权限检查：只有作者或管理员/主持人可以撤回
+                        # (简化：此处仅检查是否是管理员/主持人，实际可查询消息发送者)
+                        if is_admin_or_host: # 实际应更复杂
+                            candidate_ids.remove(message_id)
+                            await cursor.execute("UPDATE games SET candidate_custom_input_ids = ? WHERE game_id = ?", (json.dumps(candidate_ids), game_id))
+                            await self.db.conn.commit()
+                            await self.api.post_group_msg(group_id, text="一条自定义输入已被撤回。", reply=message_id)
+                            # 从缓存中删除
+                            self.vote_cache.pop(message_id, None)
+
+    async def _tally_and_advance(self, game_id: int):
+        """计票并推进游戏到下一回合"""
+        if not self.db or not self.db.conn or not self.llm_api: return
+
+        async with self.db.conn.cursor() as cursor:
+            await cursor.execute("SELECT channel_id, main_message_id, candidate_custom_input_ids FROM games WHERE game_id = ?", (game_id,))
+            game = await cursor.fetchone()
+            if not game: return
+            channel_id, main_message_id, candidate_ids_json = game
+        
+        # 计票
+        scores = {}
+        result_lines = ["🗳️ 投票结果统计："]
+        
+        # 预设选项
+        option_emojis = {127822: 'A', 9973: 'B', 128663: 'C', 128054: 'D'}
+        main_votes = self.vote_cache.get(str(main_message_id), {})
+        for emoji, option in option_emojis.items():
+            count = len(main_votes.get(emoji, set()))
+            if count > 0:
+                scores[option] = count
+                result_lines.append(f"- 选项 {option}: {count} 票")
+
+        # 自定义输入
+        candidate_ids = json.loads(candidate_ids_json)
+        for cid in candidate_ids:
+            input_votes = self.vote_cache.get(cid, {})
+            yay = len(input_votes.get(128077, set())) # 👍
+            nay = len(input_votes.get(128078, set())) # 👎
+            net_score = yay - nay
+            scores[cid] = net_score
+            # 为了显示内容，需要获取消息
+            try:
+                msg_event = await self.api.get_msg(cid)
+                content = "".join(s.text for s in msg_event.message.filter_text())
+                result_lines.append(f"- 自定义输入 \"{content[:20]}...\": {net_score} 票")
+            except:
+                result_lines.append(f"- 自定义输入 (ID: {cid}): {net_score} 票")
+
+        await self.api.post_group_msg(channel_id, text="\n".join(result_lines), reply=main_message_id)
+
+        if not scores:
+            await self.api.post_group_msg(channel_id, text="无人投票，本轮无效。")
+            return
+
+        # 找出胜利者
+        winner_id = max(scores, key=lambda k: scores[k])
+
+        # 找出胜利者
+        winner_id = max(scores, key=lambda k: scores[k])
+        
+        # 获取胜利者内容
+        winner_content = ""
+        if winner_id in option_emojis.values():
+            winner_content = f"选择选项 {winner_id}"
+        else:
+            try:
+                msg_event = await self.api.get_msg(winner_id)
+                winner_content = "".join(s.text for s in msg_event.message.filter_text())
+            except Exception as e:
+                LOG.error(f"获取胜利者自定义输入内容失败: {e}")
+                await self.api.post_group_msg(channel_id, text="获取胜利者内容失败，游戏中断。")
+                return
+
+        # 构造完整的对话历史
+        async with self.db.conn.cursor() as cursor:
+            await cursor.execute("SELECT system_prompt, head_branch_id FROM games WHERE game_id = ?", (game_id,))
+            game_data = await cursor.fetchone()
+            if not game_data: return
+            system_prompt, head_branch_id = game_data
+
+            await cursor.execute("SELECT tip_round_id FROM branches WHERE branch_id = ?", (head_branch_id,))
+            branch_data = await cursor.fetchone()
+            if not branch_data: return
+            current_round_id = branch_data[0]
+
+            history = []
+            while current_round_id != -1:
+                await cursor.execute("SELECT parent_id, player_choice, assistant_response FROM rounds WHERE round_id = ?", (current_round_id,))
+                round_data = await cursor.fetchone()
+                if not round_data: break
+                parent_id, player_choice, assistant_response = round_data
+                history.insert(0, {"role": "assistant", "content": assistant_response})
+                history.insert(0, {"role": "user", "content": player_choice})
+                current_round_id = parent_id
+            
+            messages: list[ChatCompletionMessageParam] = [{"role": "system", "content": system_prompt}]
+            # The 'history' list may contain dicts that are not valid ChatCompletionMessageParam
+            # so we need to cast them.
+            for item in history:
+                messages.append(cast(ChatCompletionMessageParam, item))
+            messages.append({"role": "user", "content": winner_content})
+
+        # 调用LLM获取下一轮内容
+        new_assistant_response, _ = await self.llm_api.get_completion(messages)
+        if not new_assistant_response:
+            await self.api.post_group_msg(channel_id, text="GM没有回应，游戏中断。")
+            return
+
+        # 创建新回合和更新分支
+        async with self.db.conn.cursor() as cursor:
+            await cursor.execute("SELECT tip_round_id FROM branches WHERE branch_id = ?", (head_branch_id,))
+            parent_round_data = await cursor.fetchone()
+            if not parent_round_data:
+                LOG.error(f"无法找到 parent_round_id for branch {head_branch_id}")
+                return
+            parent_round_id = parent_round_data[0]
+
+            await cursor.execute(
+                "INSERT INTO rounds (game_id, parent_id, player_choice, assistant_response) VALUES (?, ?, ?, ?)",
+                (game_id, parent_round_id, winner_content, new_assistant_response)
+            )
+            new_round_id = cursor.lastrowid
+
+            await cursor.execute("UPDATE branches SET tip_round_id = ? WHERE branch_id = ?", (new_round_id, head_branch_id))
+            await self.db.conn.commit()
+
+        # 进入下一轮
+        await self.checkout_head(game_id)
+        
+        # 清理缓存
+        self.vote_cache.pop(str(main_message_id), None)
+        for cid in candidate_ids:
+            self.vote_cache.pop(cid, None)
