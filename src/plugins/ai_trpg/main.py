@@ -323,7 +323,8 @@ class AITRPGPlugin(NcatBotPlugin):
         if not self.db or not self.db.conn or not self.renderer:
             LOG.error(f"检出 head 失败：组件未初始化。")
             return
-
+        
+        channel_id = None
         try:
             async with self.db.conn.cursor() as cursor:
                 # 1. 获取游戏和 head 分支信息
@@ -384,12 +385,8 @@ class AITRPGPlugin(NcatBotPlugin):
 
         except Exception as e:
             LOG.error(f"检出 head (game_id: {game_id}) 时出错: {e}", exc_info=True)
-            channel_id_str = ""
-            if 'channel_id' in locals() and locals()['channel_id']:
-                channel_id_str = str(locals()['channel_id'])
-            
-            if channel_id_str:
-                await self.api.post_group_msg(channel_id_str, text=f"❌ 更新游戏状态失败: {e}")
+            if channel_id:
+                await self.api.post_group_msg(str(channel_id), text=f"❌ 更新游戏状态失败: {e}")
 
     async def _handle_game_reaction(self, event: NoticeEvent):
         """处理游戏进行中的表情回应，包括投票、撤回和管理员操作"""
