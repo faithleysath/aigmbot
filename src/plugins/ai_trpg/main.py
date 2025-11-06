@@ -159,6 +159,8 @@ class AITRPGPlugin(NcatBotPlugin):
                 del self.pending_new_games[event.message_id]
         elif event.emoji_like_id == "127881":
             # 游戏开始
+            await self.api.set_msg_emoji_like(event.message_id, "127881")
+            await self.api.set_msg_emoji_like(event.message_id, "9749", set=False)
             await self.api.post_group_msg(event.group_id, "新的 AI TRPG 游戏已创建！请稍候，正在初始化游戏环境...", at=event.user_id, reply=event.message_id)
             LOG.info(f"用户 {event.user_id} 确认创建新游戏。初始化游戏环境中...")
             # TODO
