@@ -1,13 +1,22 @@
 from ncatbot.plugin_system import NcatBotPlugin, command_registry, on_notice, filter_registry
 from ncatbot.core.event import GroupMessageEvent, NoticeEvent
+from ncatbot.core.event.message_segment import File
 from ncatbot.utils import get_log
 from pathlib import Path
+import aiohttp
 
 from .db import Database
 from .llm_api import LLM_API
 from .renderer import MarkdownRenderer
 
 LOG = get_log(__name__)
+
+import base64
+
+def bytes_to_base64(bytes: bytes) -> str:
+    """将字节数据转换为Base64字符串"""
+    return base64.b64encode(bytes).decode('utf-8')
+
 
 class AITRPGPlugin(NcatBotPlugin):
     name = "AITRPGPlugin"
@@ -63,4 +72,34 @@ class AITRPGPlugin(NcatBotPlugin):
 
     # --- 核心游戏逻辑 (待实现) ---
 
-    
+    @filter_registry.group_filter
+    async def listen_file_message(self, event: GroupMessageEvent):
+        """监听群文件消息，检查是否是.txt或.md文件"""
+        files = event.message.filter(File)
+        if not files:
+            return
+        # 取第一个文件
+        file = files[0]
+        if not file.file.endswith((".txt", ".md")):
+            return
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(file.url) as response:
+                    if response.status == 200:
+                        content = await response.text()
+                        preview = content[:500]
+                        # 交给markdown渲染器处理，或直接输出预览
+                        if self.renderer:
+                            img: bytes | None = await self.renderer.render(preview)
+                            if img:
+                                await event.reply(image=f"data:image/png;base64,{bytes_to_base64(img)}")
+                            else:
+                                await event.reply(f"文件预览:\n\n{preview}")
+                        else:
+                            await event.reply(f"文件预览:\n\n{preview}")
+                    else:
+                        LOG.warning(f"下载文件预览失败，状态码: {response.status}")
+                        await event.reply("无法获取文件预览。")
+        except Exception as e:
+            LOG.error(f"下载或读取文件预览时出错: {e}")
+            await event.reply("无法获取文件预览。")
