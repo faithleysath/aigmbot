@@ -90,7 +90,7 @@ class AITRPGPlugin(NcatBotPlugin):
                 async with session.get(file.url) as response:
                     if response.status == 200:
                         content = await response.text()
-                        preview = content[:500]
+                        preview = content[:2000]
                         LOG.debug(f"文件预览内容:\n{preview}")
                         # 交给markdown渲染器处理，或直接输出预览
                         if self.renderer:
@@ -98,16 +98,16 @@ class AITRPGPlugin(NcatBotPlugin):
                             img: bytes | None = await self.renderer.render(preview)
                             if img:
                                 LOG.debug("图片渲染成功，发送图片预览。")
-                                await event.reply(image=f"data:image/png;base64,{bytes_to_base64(img)}")
+                                await event.reply(image=f"data:image/png;base64,{bytes_to_base64(img)}", at=False)
                             else:
                                 LOG.debug("图片渲染失败，发送文本预览。")
-                                await event.reply(f"文件预览:\n\n{preview}")
+                                await event.reply(f"文件预览:\n\n{preview}", at=False)
                         else:
                             LOG.debug("没有Markdown渲染器，发送文本预览。")
-                            await event.reply(f"文件预览:\n\n{preview}")
+                            await event.reply(f"文件预览:\n\n{preview}", at=False)
                     else:
                         LOG.warning(f"下载文件预览失败，状态码: {response.status}")
-                        await event.reply("无法获取文件预览。")
+                        await event.reply("无法获取文件预览。", at=False)
         except Exception as e:
             LOG.error(f"下载或读取文件预览时出错: {e}")
-            await event.reply("无法获取文件预览。")
+            await event.reply("无法获取文件预览。", at=False)
