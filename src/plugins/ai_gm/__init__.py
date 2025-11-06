@@ -1,3 +1,3 @@
-from .main import AIGamePlugin
+from .main import AIGMPlugin
 
-__all__ = ["AIGamePlugin"]
+__all__ = ["AIGMPlugin"]

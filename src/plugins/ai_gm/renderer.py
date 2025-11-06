@@ -1,28 +1,50 @@
 from markdown_it import MarkdownIt
 from playwright.async_api import async_playwright
 from ncatbot.utils import get_log
-import os
+import asyncio
 
 LOG = get_log(__name__)
 
-class MarkdownRenderer:
-    def __init__(self, output_path: str):
-        self.output_path = output_path
-        if not os.path.exists(self.output_path):
-            os.makedirs(self.output_path)
-        self.md = MarkdownIt()
 
-    async def render(self, markdown_text: str, filename: str) -> str | None:
+class MarkdownRenderer:
+    def __init__(self):
+        self.md = MarkdownIt("commonmark").disable("html_block").disable("html_inline")
+        self._p = None
+        self._browser = None
+        self._init_lock = asyncio.Lock()
+
+    async def _ensure_browser(self):
+        if self._browser:
+            return self._browser
+        async with self._init_lock:
+            if self._browser:
+                return self._browser
+            self._p = await async_playwright().start()
+            try:
+                self._browser = await self._p.chromium.launch()
+            except Exception:
+                self._browser = await self._p.chromium.launch(args=["--no-sandbox"])
+        return self._browser
+
+    async def close(self):
+        try:
+            if self._browser:
+                await self._browser.close()
+            if self._p:
+                await self._p.stop()
+        except Exception as e:
+            LOG.warning(f"关闭渲染器失败: {e}")
+
+    async def render_markdown(self, markdown_text: str) -> bytes | None:
         """
-        将 Markdown 文本渲染成图片。
+        将 Markdown 文本渲染成图片的二进制数据。
 
         :param markdown_text: 要渲染的 Markdown 字符串。
-        :param filename: 输出图片的文件名（不含扩展名）。
-        :return: 成功则返回图片文件的绝对路径，否则返回 None。
+        :return: 成功则返回图片的二进制数据 (bytes)，否则返回 None。
         """
         try:
             html_content = self.md.render(markdown_text)
-            
+
             # 添加一些基础样式以改善外观
             html_with_style = f"""
             <!DOCTYPE html>
@@ -68,29 +90,29 @@ class MarkdownRenderer:
             </html>
             """
 
-            output_filepath = os.path.join(self.output_path, f"{filename}.png")
+            browser = await self._ensure_browser()
+            page = await browser.new_page()
+            try:
+                await page.set_viewport_size({"width": 1000, "height": 100})
+                await page.set_content(html_with_style, wait_until="networkidle")
+                await page.wait_for_timeout(50)
 
-            async with async_playwright() as p:
-                browser = await p.chromium.launch()
-                page = await browser.new_page()
-                await page.set_content(html_with_style)
-                
                 # 截图 body 元素以获得准确的内容尺寸
-                element = await page.query_selector('body')
-                if element:
-                    await element.screenshot(path=output_filepath)
-                else:
-                    # 如果找不到 body，则截图整个页面作为备用
-                    await page.screenshot(path=output_filepath, full_page=True)
-                    
-                await browser.close()
+                element = await page.query_selector("body")
+                image_bytes = await (
+                    element.screenshot() if element else page.screenshot(full_page=True)
+                )
+            finally:
+                await page.close()
 
-            LOG.info(f"Markdown 成功渲染为图片: {output_filepath}")
-            return output_filepath
+            LOG.info("Markdown 成功渲染为图片二进制数据。")
+            return image_bytes
 
         except Exception as e:
             LOG.error(f"Markdown 渲染失败: {e}")
             # 确保 Playwright 的浏览器驱动已安装
             if "Executable doesn't exist" in str(e):
-                LOG.error("Playwright browser is not installed. Please run 'playwright install' in your terminal.")
+                LOG.error(
+                    "Playwright browser is not installed. Please run 'playwright install' in your terminal."
+                )
             return None

@@ -1,24 +1,27 @@
-import os
-import json
-import uuid
-import openai
-from pathlib import Path
-
-from ncatbot.plugin_system import NcatBotPlugin, command_registry, on_notice, filter_registry
+from ncatbot.plugin_system import (
+    NcatBotPlugin,
+    on_notice,
+    filter_registry,
+)
 from ncatbot.core.event import GroupMessageEvent, NoticeEvent
-from ncatbot.core.event.message_segment import Reply
 from ncatbot.utils import get_log
+from pathlib import Path
 
 from .db import Database
 from .llm_api import LLM_API
 from .renderer import MarkdownRenderer
+from .cache import CacheManager
+from .game_manager import GameManager
+from .event_handler import EventHandler
+from .content_fetcher import ContentFetcher
 
 LOG = get_log(__name__)
 
-class AIGamePlugin(NcatBotPlugin):
-    name = "AIGamePlugin"
+
+class AIGMPlugin(NcatBotPlugin):
+    name = "AIGMPlugin"
     version = "1.0.0"
-    description = "一个基于 AI GM 的互动叙事游戏插件"
+    description = "一个基于 AI GM 和 Git 版本控制概念的互动叙事游戏插件"
     author = "Cline"
 
     def __init__(self, **kwargs):
@@ -26,555 +29,93 @@ class AIGamePlugin(NcatBotPlugin):
         self.db: Database | None = None
         self.llm_api: LLM_API | None = None
         self.renderer: MarkdownRenderer | None = None
-        self.vote_cache: dict = {} # 用于实时追踪投票情况
-        self.data_path: Path = Path() # Add type hint for data_path
+        self.cache_manager: CacheManager | None = None
+        self.game_manager: GameManager | None = None
+        self.event_handler: EventHandler | None = None
+        self.data_path: Path = Path()
 
     async def on_load(self):
         """插件加载时执行的初始化操作"""
         LOG.info(f"[{self.name}] 正在加载...")
-        
-        # 注册配置项
+
+        # 1. 注册配置项
         self.register_config("openai_api_key", "YOUR_API_KEY_HERE")
         self.register_config("openai_base_url", "https://api.openai.com/v1")
         self.register_config("openai_model_name", "gpt-4-turbo")
-        self.register_config("system_prompt", "你是一个互动叙事游戏的主持人（GM），故事背景设定在一个末世废土世界。\n你的职责是：\n1. **游戏开局**：首先，你必须要求玩家以自定义回复的形式，提供他们想要扮演的角色信息，例如：姓名、年龄、性别、背景、技能等。\n2. **推进故事**：在收到玩家的角色信息或后续选择后，根据故事进展，为玩家提供明确的、以大写字母（A, B, C...）开头的多个选项。\n3. **引导互动**：玩家将通过投票选择选项或提交自定义回复来决定故事走向。你需要根据他们的选择来动态发展剧情。")
+        self.register_config("pending_game_timeout", 5, "新游戏等待确认的超时时间（分钟）")
         LOG.debug(f"[{self.name}] 配置项注册完毕。")
 
-        # 初始化数据库
-        # NcatBotPlugin 基类提供了 self.data_path，这是一个 Path 对象，指向插件的私有数据目录
-        db_path = self.data_path / "data" / "AIGamePlugin" / "aigame_plugin.db"
-        LOG.debug(f"[{self.name}] 数据库路径: {db_path}")
+        # 2. 初始化路径和数据库
+        data_dir = self.data_path / "data" / "AIGMPlugin"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        db_path = data_dir / "ai_trpg.db"
+        cache_path = data_dir / "cache.json"
+
         self.db = Database(str(db_path))
         await self.db.connect()
         LOG.debug(f"[{self.name}] 数据库连接成功。")
 
-        # 初始化 LLM API
+        # 3. 初始化LLM API
         try:
             api_key = self.config.get("openai_api_key", "")
+            if not api_key or api_key == "YOUR_API_KEY_HERE":
+                raise ValueError("OpenAI API key is not configured.")
             base_url = self.config.get("openai_base_url", "https://api.openai.com/v1")
             model_name = self.config.get("openai_model_name", "gpt-4-turbo")
-            LOG.debug(f"[{self.name}] LLM配置 - API Key: {'*' * (len(api_key) - 4) + api_key[-4:] if api_key != 'YOUR_API_KEY_HERE' else 'Not Set'}, Base URL: {base_url}, Model: {model_name}")
-
-            if not isinstance(api_key, str) or not isinstance(base_url, str) or not isinstance(model_name, str):
-                raise TypeError("Config values must be strings.")
-
             self.llm_api = LLM_API(
-                api_key=api_key,
-                base_url=base_url,
-                model_name=model_name,
+                api_key=api_key, base_url=base_url, model_name=model_name
             )
-        except (ValueError, TypeError) as e:
-            LOG.error(f"LLM API 初始化失败: {e}. 请在 data/AIGamePlugin/AIGamePlugin.yaml 中配置正确的 openai 参数。")
-            self.llm_api = None # 标记为不可用
+        except ValueError as e:
+            LOG.error(f"LLM API 初始化失败: {e}")
 
-        # 初始化 Markdown 渲染器
-        render_output_path = self.data_path / "renders"
-        self.renderer = MarkdownRenderer(str(render_output_path))
-        LOG.debug(f"[{self.name}] Markdown渲染器初始化，输出路径: {render_output_path}")
+        # 4. 初始化渲染器
+        self.renderer = MarkdownRenderer()
+        LOG.debug(f"[{self.name}] Markdown渲染器初始化完成。")
+
+        # 5. 初始化管理器
+        self.cache_manager = CacheManager(cache_path)
+        await self.cache_manager.load_from_disk()
+
+        if self.db and self.llm_api and self.renderer and self.cache_manager:
+            content_fetcher = ContentFetcher(self, self.cache_manager)
+            self.game_manager = GameManager(
+                self,
+                self.db,
+                self.llm_api,
+                self.renderer,
+                self.cache_manager,
+                content_fetcher,
+            )
+            self.event_handler = EventHandler(
+                self,
+                self.db,
+                self.cache_manager,
+                self.game_manager,
+                self.renderer,
+                content_fetcher,
+            )
+        else:
+            LOG.error(f"[{self.name}] 部分组件初始化失败，插件功能可能不完整。")
+
         LOG.info(f"[{self.name}] 加载完成。")
 
     async def on_close(self):
         """插件关闭时执行的操作"""
+        if self.cache_manager:
+            await self.cache_manager.save_to_disk()
         if self.db:
             await self.db.close()
-        LOG.info(f"{self.name} 已卸载。")
-
-    @command_registry.command("aigm", description="开始一场 AI GM 游戏")
-    async def start_game_command(self, event: GroupMessageEvent):
-        """处理 /aigm 命令，开始新游戏"""
-        LOG.debug(f"[{self.name}] 接到 /aigm 命令，来自群 {event.group_id} 的用户 {event.user_id}")
-        if not self.llm_api or not self.db or not self.renderer:
-            LOG.warning(f"[{self.name}] 插件未完全初始化，无法开始游戏。LLM: {bool(self.llm_api)}, DB: {bool(self.db)}, Renderer: {bool(self.renderer)}")
-            await event.reply("❌ 插件未完全初始化，无法开始游戏。")
-            return
-
-        group_id = str(event.group_id)
-        
-        if not self.db.conn:
-            LOG.error(f"[{self.name}] 数据库未连接，无法检查游戏状态。")
-            await event.reply("❌ 数据库未连接，无法检查游戏状态。")
-            return
-
-        async with self.db.conn.cursor() as cursor:
-            await cursor.execute("SELECT status FROM games WHERE group_id = ?", (group_id,))
-            game = await cursor.fetchone()
-            LOG.debug(f"[{self.name}] 查询群 {group_id} 的游戏状态: {'无记录' if not game else game[0]}")
-            if game and game[0] == 'running':
-                await event.reply("❌ 本群已有一局游戏正在进行中，请先结束或等待当前游戏完成。")
-                return
-        
-        await event.reply("🚀 新游戏即将开始... 正在联系 GM 生成开场白...")
-        LOG.info(f"群 {group_id} 的用户 {event.user_id} 正在开始新游戏。")
-        
-        try:
-            await self._start_new_game(group_id)
-        except Exception as e:
-            LOG.error(f"开始新游戏时发生严重错误: {e}", exc_info=True)
-            await self.api.post_group_msg(group_id, text=f"❌ 启动游戏失败，发生内部错误: {e}")
-
-    async def _start_new_game(self, group_id: str):
-        """内部方法，处理新游戏的完整启动流程"""
-        LOG.debug(f"[{self.name}] _start_new_game 调用，群ID: {group_id}")
-        if not self.llm_api or not self.db or not self.renderer:
-            LOG.error("游戏启动失败：组件未初始化。")
-            return
-
-        # 1. 构建初始 messages
-        system_prompt = self.config.get("system_prompt", "你是一个互动叙事游戏的主持人（GM）。")
-        initial_messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": "开始"}
-        ]
-        LOG.debug(f"[{self.name}] 构建初始消息: {initial_messages}")
-
-        # 2. 调用 LLM 获取开场白
-        LOG.debug(f"[{self.name}] 正在调用 LLM 获取开场白...")
-        assistant_response = await self.llm_api.get_completion(initial_messages)
-        if not assistant_response:
-            LOG.error(f"[{self.name}] LLM 未返回开场白。")
-            await self.api.post_group_msg(group_id, text="❌ GM 没有回应，无法开始游戏。")
-            return
-        LOG.debug(f"[{self.name}] 收到 LLM 开场白，长度: {len(assistant_response)}")
-
-        # 3. 渲染 Markdown 为图片
-        image_filename = f"round_{group_id}_{uuid.uuid4()}"
-        LOG.debug(f"[{self.name}] 准备渲染 Markdown 为图片: {image_filename}")
-        image_path = await self.renderer.render(assistant_response, image_filename)
-        if not image_path:
-            LOG.error(f"[{self.name}] Markdown 渲染失败。")
-            await self.api.post_group_msg(group_id, text="❌ 渲染游戏场景失败，无法开始游戏。")
-            return
-        LOG.debug(f"[{self.name}] Markdown 渲染成功，图片路径: {image_path}")
-            
-        # 4. 发送图片
-        LOG.debug(f"[{self.name}] 正在发送场景图片...")
-        main_message_id = await self.api.post_group_file(group_id, image=image_path)
-        if not main_message_id:
-            LOG.error(f"[{self.name}] 发送场景图片失败。")
-            await self.api.post_group_msg(group_id, text="❌ 发送游戏场景失败，无法开始游戏。")
-            return
-        LOG.debug(f"[{self.name}] 场景图片发送成功，消息ID: {main_message_id}")
-
-        # 5. 贴上表情
-        LOG.debug(f"[{self.name}] 正在为消息 {main_message_id} 贴上表情...")
-        # 表情ID来自于你的描述
-        emoji_map = {
-            'A': 127822, 'B': 9973, 'C': 128663, 'D': 128054,
-            'E': 127859, 'F': 128293, 'G': 128123,
-            'Confirm': 127881, 'Deny': 128560, 'Retract': 10060
-        }
-        for _, emoji_id in emoji_map.items():
-            try:
-                await self.api.set_msg_emoji_like(main_message_id, emoji_id)
-            except Exception as e:
-                LOG.warning(f"为消息 {main_message_id} 贴表情 {emoji_id} 失败: {e}")
-
-        # 6. 在数据库中创建记录
-        if not self.db or not self.db.conn:
-            LOG.error("数据库未连接，无法创建游戏记录。")
-            await self.api.post_group_msg(group_id, text="❌ 内部错误：数据库连接丢失。")
-            return
-        LOG.debug(f"[{self.name}] 准备在数据库中创建/更新游戏记录...")
-
-        async with self.db.conn.cursor() as cursor:
-            # 检查是否已有游戏，有则更新，无则创建
-            await cursor.execute("SELECT * FROM games WHERE group_id = ?", (group_id,))
-            game = await cursor.fetchone()
-            
-            messages_history_json = json.dumps(initial_messages + [{"role": "assistant", "content": assistant_response}])
-
-            if game:
-                LOG.debug(f"[{self.name}] 群 {group_id} 已存在游戏记录，更新状态为 'running'。")
-                await cursor.execute(
-                    "UPDATE games SET status = ?, messages_history = ?, updated_at = CURRENT_TIMESTAMP WHERE group_id = ?",
-                    ("running", messages_history_json, group_id)
-                )
-            else:
-                LOG.debug(f"[{self.name}] 群 {group_id} 无游戏记录，创建新记录。")
-                await cursor.execute(
-                    "INSERT INTO games (group_id, status, messages_history) VALUES (?, ?, ?)",
-                    (group_id, "running", messages_history_json)
-                )
-            
-            # 创建新的回合记录
-            LOG.debug(f"[{self.name}] 插入新的回合记录 (回合 1)。")
-            await cursor.execute(
-                "INSERT INTO rounds (game_group_id, round_number, main_message_id, assistant_response) VALUES (?, ?, ?, ?)",
-                (group_id, 1, main_message_id, assistant_response)
-            )
-        await self.db.conn.commit()
-        
-        LOG.info(f"群 {group_id} 的新游戏已成功开始，主消息 ID: {main_message_id}")
+        if self.renderer:
+            # await self.renderer.close()
+            pass # 因为 MarkdownRenderer 目前没有异步关闭操作，会报错
+        LOG.info(f"[{self.name}] 已卸载。")
 
     @filter_registry.group_filter
-    async def on_group_message(self, event: GroupMessageEvent):
-        """处理群聊消息，主要用于捕获对游戏主消息的回复"""
-        if not self.db or not self.db.conn:
-            return # 插件未完全初始化
-
-        # 检查消息是否为回复
-        reply_segments = event.message.filter(Reply)
-        if not reply_segments:
-            return
-        
-        reply_segment = reply_segments[0]
-        replied_to_id = reply_segment.id
-        group_id = str(event.group_id)
-        LOG.debug(f"[{self.name}] 收到来自群 {group_id} 的回复消息，回复目标ID: {replied_to_id}")
-
-        async with self.db.conn.cursor() as cursor:
-            # 检查被回复的消息是否是当前游戏回合的主消息
-            await cursor.execute(
-                """SELECT id FROM rounds 
-                   WHERE game_group_id = ? AND main_message_id = ? 
-                   ORDER BY round_number DESC LIMIT 1""",
-                (group_id, replied_to_id)
-            )
-            round_row = await cursor.fetchone()
-
-            if round_row:
-                LOG.debug(f"[{self.name}] 该回复是对当前回合主消息的响应。")
-                round_id = round_row[0]
-                user_id = str(event.user_id)
-                message_id = str(event.message_id)
-                content = "".join(seg.text for seg in event.message.filter_text())
-                LOG.debug(f"[{self.name}] 用户 {user_id} 提交了自定义输入: '{content}'")
-
-                # 将自定义输入存入数据库
-                await cursor.execute(
-                    """INSERT INTO custom_inputs (round_id, user_id, message_id, content)
-                       VALUES (?, ?, ?, ?)""",
-                    (round_id, user_id, message_id, content)
-                )
-                await self.db.conn.commit()
-                LOG.info(f"记录了新的自定义输入 from {user_id}: {content}")
-
-                # 为该回复贴上表情
-                LOG.debug(f"[{self.name}] 为自定义输入消息 {message_id} 添加回应表情。")
-                reaction_emojis = [127881, 128560, 10060] # 🎉, 😰, ❌
-                for emoji in reaction_emojis:
-                    try:
-                        await self.api.set_msg_emoji_like(message_id, emoji)
-                    except Exception as e:
-                        LOG.warning(f"为自定义输入 {message_id} 贴表情 {emoji} 失败: {e}")
+    async def handle_group_message(self, event: GroupMessageEvent):
+        if self.event_handler:
+            await self.event_handler.handle_group_message(event)
 
     @on_notice
     async def handle_emoji_reaction(self, event: NoticeEvent):
-        """处理表情回应，这是游戏结算和状态变更的核心触发器"""
-        if event.notice_type != 'group_msg_emoji_like':
-            return
-
-        user_id = str(event.user_id)
-        # 忽略机器人自己的表情回应，防止自我触发和污染缓存
-        if user_id == str(event.self_id):
-            return
-
-        group_id = str(event.group_id)
-        message_id = str(event.message_id)
-        if event.emoji_like_id is None:
-            return
-        emoji_id = int(event.emoji_like_id)
-
-        # 更新投票缓存
-        if event.is_add:
-            self.vote_cache.setdefault(message_id, {}).setdefault(emoji_id, set()).add(user_id)
-            LOG.debug(f"[{self.name}] 投票缓存更新: ADD - msg={message_id}, emoji={emoji_id}, user={user_id}")
-        else: # is_add is False, means emoji is removed
-            if message_id in self.vote_cache and emoji_id in self.vote_cache[message_id]:
-                self.vote_cache[message_id][emoji_id].discard(user_id)
-                LOG.debug(f"[{self.name}] 投票缓存更新: REMOVE - msg={message_id}, emoji={emoji_id}, user={user_id}")
-
-        if not self.db or not self.db.conn:
-            return
-
-        # 定义管理员操作的表情
-        admin_action_emojis = {127881: 'confirm', 128560: 'deny', 10060: 'retract_game'}
-        # 定义用户撤回自定义输入的表情
-        input_retract_emoji = 10060
-
-        try:
-            # 检查是否是管理员操作
-            is_admin = await self._is_group_admin(group_id, user_id)
-            LOG.debug(f"[{self.name}] 用户 {user_id} 的管理员状态: {is_admin}")
-            if is_admin and emoji_id in admin_action_emojis:
-                LOG.debug(f"[{self.name}] 检测到管理员 {user_id} 的操作，表情ID: {emoji_id}")
-                # 检查表情是否贴在当前回合的主消息上
-                async with self.db.conn.cursor() as cursor:
-                    await cursor.execute(
-                        "SELECT 1 FROM rounds WHERE game_group_id = ? AND main_message_id = ? ORDER BY round_number DESC LIMIT 1",
-                        (group_id, message_id)
-                    )
-                    if await cursor.fetchone():
-                        LOG.debug(f"[{self.name}] 管理员操作的目标是当前回合的主消息。")
-                        action = admin_action_emojis[emoji_id]
-                        LOG.info(f"[{self.name}] 执行管理员操作: {action}")
-                        if action == 'confirm':
-                            await self._handle_confirm(group_id, message_id)
-                        elif action == 'deny':
-                            await self._handle_deny(group_id, message_id)
-                        elif action == 'retract_game':
-                            await self._handle_retract_game(group_id, message_id)
-                        return
-
-            # 检查是否是用户撤回自己的自定义输入
-            if emoji_id == input_retract_emoji:
-                LOG.debug(f"[{self.name}] 检测到撤回自定义输入的操作，表情ID: {emoji_id}")
-                async with self.db.conn.cursor() as cursor:
-                    # 检查表情是否贴在某个自定义输入上，并且操作者是该输入的作者或管理员
-                    await cursor.execute(
-                        "SELECT user_id FROM custom_inputs WHERE message_id = ?", (message_id,)
-                    )
-                    row = await cursor.fetchone()
-                    if row and (user_id == str(row[0]) or is_admin):
-                        LOG.info(f"[{self.name}] 用户 {user_id} 正在撤回自定义输入 (消息ID: {message_id})。")
-                        await self._handle_retract_input(group_id, message_id)
-
-        except Exception as e:
-            LOG.error(f"处理表情回应时出错: {e}", exc_info=True)
-
-    async def _is_group_admin(self, group_id: str, user_id: str) -> bool:
-        """检查用户是否为群管理员或群主"""
-        try:
-            member_info = await self.api.get_group_member_info(group_id, user_id)
-            return member_info.role in ["admin", "owner"]
-        except Exception as e:
-            LOG.error(f"获取群 {group_id} 成员 {user_id} 信息失败: {e}")
-            return False
-
-    async def _tally_votes(self, group_id: str, main_message_id: str) -> tuple[dict, str]:
-        """统计一轮投票的结果，返回分数和格式化的结果字符串"""
-        LOG.debug(f"[{self.name}] 开始从缓存计票，群ID: {group_id}, 主消息ID: {main_message_id}")
-        if not self.db or not self.db.conn:
-            raise RuntimeError("Database not connected.")
-
-        scores = {}
-        result_lines = ["🗳️ 投票结果统计："]
-        
-        # 1. 统计主消息的预设选项票数
-        LOG.debug(f"[{self.name}] 正在统计预设选项的票数...")
-        option_emoji_map = {
-            127822: 'A', 9973: 'B', 128663: 'C', 128054: 'D',
-            127859: 'E', 128293: 'F', 128123: 'G'
-        }
-        message_votes = self.vote_cache.get(main_message_id, {})
-        for emoji_id, option in option_emoji_map.items():
-            voters = message_votes.get(emoji_id, set())
-            count = len(voters)
-            if count > 0:
-                scores[option] = count
-                result_lines.append(f"- 选项 {option}: {count} 票")
-                LOG.debug(f"[{self.name}] 选项 {option} (emoji: {emoji_id}) 获得 {count} 票。")
-
-        # 2. 统计自定义输入的票数
-        LOG.debug(f"[{self.name}] 正在统计自定义输入的票数...")
-        async with self.db.conn.cursor() as cursor:
-            await cursor.execute(
-                """SELECT ci.message_id, ci.content, ci.user_id FROM custom_inputs ci
-                   JOIN rounds r ON ci.round_id = r.id
-                   WHERE r.main_message_id = ? AND ci.is_retracted = 0""",
-                (main_message_id,)
-            )
-            custom_inputs = await cursor.fetchall()
-
-        for msg_id, content, user_id in custom_inputs:
-            input_votes = self.vote_cache.get(str(msg_id), {})
-            yay_count = len(input_votes.get(127881, set())) # 🎉
-            nay_count = len(input_votes.get(128560, set())) # 😰
-            
-            net_score = yay_count - nay_count
-            scores[f"custom_{msg_id}"] = {"score": net_score, "content": content, "user_id": user_id}
-            result_lines.append(f"- 自定义输入 (来自 @{user_id}): \"{content[:20]}...\" - 净得票: {net_score}")
-            LOG.debug(f"[{self.name}] 自定义输入 '{content[:20]}...' (msg_id: {msg_id}) 净得票: {net_score} (赞成: {yay_count}, 反对: {nay_count})")
-        
-        LOG.debug(f"[{self.name}] 计票完成。Scores: {scores}")
-        return scores, "\n".join(result_lines)
-
-    async def _handle_confirm(self, group_id: str, message_id: str):
-        """处理确认操作，支持在API调用失败时重试"""
-        if not self.db or not self.db.conn or not self.llm_api: return
-        LOG.info(f"群 {group_id} 管理员确认了投票 (消息: {message_id})")
-        
-        scores, result_text = await self._tally_votes(group_id, message_id)
-        await self.api.post_group_msg(group_id, text=result_text, reply=message_id)
-
-        if not scores:
-            LOG.warning(f"[{self.name}] 计票结果为空，本轮无效。")
-            await self.api.post_group_msg(group_id, text="无人投票，本轮无效，请重新开始或由管理员继续。")
-            return
-
-        # 1. 决定胜出者
-        max_score = -float('inf')
-        for key, value in scores.items():
-            current_score = value if isinstance(value, int) else value['score']
-            if current_score > max_score:
-                max_score = current_score
-        
-        winners = []
-        for key, value in scores.items():
-            current_score = value if isinstance(value, int) else value['score']
-            if current_score == max_score:
-                winners.append(key)
-
-        winning_content = []
-        for winner in winners:
-            if winner.startswith("custom_"):
-                winning_content.append(scores[winner]['content'])
-            else:
-                winning_content.append(f"选择选项 {winner}")
-        
-        user_choice_text = " & ".join(winning_content)
-        LOG.info(f"[{self.name}] 最终胜出的选择是: '{user_choice_text}'")
-
-        # 2. 准备API调用，但不修改状态
-        async with self.db.conn.cursor() as cursor:
-            LOG.debug(f"[{self.name}] 从数据库检索当前消息历史...")
-            await cursor.execute("SELECT messages_history FROM games WHERE group_id = ?", (group_id,))
-            game_row = await cursor.fetchone()
-            if not game_row: return
-
-            messages_history = json.loads(game_row[0])
-            
-        temp_messages_history = messages_history + [{"role": "user", "content": user_choice_text}]
-        
-        # 3. 尝试调用API
-        LOG.debug(f"[{self.name}] 调用 LLM 获取下一轮内容...")
-        try:
-            new_assistant_response = await self.llm_api.get_completion(temp_messages_history)
-            if not new_assistant_response:
-                LOG.error(f"[{self.name}] LLM 未返回下一轮内容，游戏中断。")
-                await self.api.post_group_msg(group_id, text="❌ GM 没有回应，游戏中断。请管理员修复后重试。")
-                return
-        except openai.RateLimitError:
-            LOG.warning(f"[{self.name}] LLM API 调用超出频率限制。")
-            await self.api.post_group_msg(group_id, text="🧠 GM 脑袋过载了，请管理员稍等片刻后再次点击 ✅ 重试。")
-            return
-        except openai.APIError as e:
-            LOG.error(f"[{self.name}] LLM API 调用时发生错误: {e}")
-            await self.api.post_group_msg(group_id, text=f"❌ 与 GM 通信时发生错误，请管理员修复后再次点击 ✅ 重试。\n错误: {e}")
-            return
-
-        # 4. API调用成功后，清理缓存并更新数据库
-        LOG.debug(f"[{self.name}] API调用成功，正在更新游戏状态...")
-        
-        # 清理本轮所有相关的投票缓存
-        LOG.debug(f"[{self.name}] 正在清理与主消息 {message_id} 相关的所有投票缓存...")
-        self.vote_cache.pop(message_id, None)
-        async with self.db.conn.cursor() as cursor:
-            await cursor.execute(
-                """SELECT ci.message_id FROM custom_inputs ci
-                   JOIN rounds r ON ci.round_id = r.id
-                   WHERE r.main_message_id = ?""",
-                (message_id,)
-            )
-            inputs_to_clear = await cursor.fetchall()
-            for (input_msg_id,) in inputs_to_clear:
-                self.vote_cache.pop(str(input_msg_id), None)
-        LOG.debug(f"[{self.name}] 所有相关投票缓存清理完毕。")
-
-        # 更新数据库
-        final_messages_history = temp_messages_history + [{"role": "assistant", "content": new_assistant_response}]
-        async with self.db.conn.cursor() as cursor:
-            LOG.debug(f"[{self.name}] 更新数据库中的消息历史...")
-            await cursor.execute("UPDATE games SET messages_history = ? WHERE group_id = ?", (json.dumps(final_messages_history), group_id))
-        await self.db.conn.commit()
-
-        # 5. 开启下一轮
-        await self._start_next_round(group_id, new_assistant_response)
-
-    async def _handle_deny(self, group_id: str, message_id: str):
-        """处理否决操作"""
-        LOG.info(f"群 {group_id} 管理员否决了投票 (消息: {message_id})")
-        _, result_text = await self._tally_votes(group_id, message_id)
-        LOG.debug(f"[{self.name}] 生成的计票文本: {result_text}")
-        announcement = result_text + "\n\n**由于管理员的一票否决，本次投票作废，将重新开始本轮投票。**"
-        await self.api.post_group_msg(group_id, text=announcement, reply=message_id)
-
-        if not self.db or not self.db.conn: return
-        async with self.db.conn.cursor() as cursor:
-            await cursor.execute("SELECT assistant_response FROM rounds WHERE main_message_id = ?", (message_id,))
-            row = await cursor.fetchone()
-            if row:
-                await self._start_next_round(group_id, row[0])
-
-    async def _handle_retract_game(self, group_id: str, message_id: str):
-        """处理游戏回退操作"""
-        LOG.info(f"群 {group_id} 管理员回退了游戏 (消息: {message_id})")
-        if not self.db or not self.db.conn: return
-
-        await self.api.post_group_msg(group_id, text="**管理员执行了悔棋操作，游戏将回退到上一轮。**", reply=message_id)
-
-        async with self.db.conn.cursor() as cursor:
-            LOG.debug(f"[{self.name}] 正在从数据库回退消息历史...")
-            await cursor.execute("SELECT messages_history FROM games WHERE group_id = ?", (group_id,))
-            row = await cursor.fetchone()
-            if not row: return
-            
-            messages_history = json.loads(row[0])
-            if len(messages_history) >= 2:
-                messages_history.pop() # 移除上一轮的 assistant 回复
-                messages_history.pop() # 移除上一轮的 user 选择
-                LOG.debug(f"[{self.name}] 消息历史已回退，当前长度: {len(messages_history)}")
-
-            await cursor.execute("UPDATE games SET messages_history = ? WHERE group_id = ?", (json.dumps(messages_history), group_id))
-            await self.db.conn.commit()
-
-            if messages_history:
-                previous_assistant_response = messages_history[-1]['content']
-                await self._start_next_round(group_id, previous_assistant_response)
-
-    async def _handle_retract_input(self, group_id: str, message_id: str):
-        """处理自定义输入的撤回"""
-        if not self.db or not self.db.conn: return
-        LOG.debug(f"[{self.name}] 正在数据库中标记自定义输入 {message_id} 为已撤回。")
-        async with self.db.conn.cursor() as cursor:
-            await cursor.execute("UPDATE custom_inputs SET is_retracted = 1 WHERE message_id = ?", (message_id,))
-            await self.db.conn.commit()
-        
-        await self.api.post_group_msg(group_id, text=f"一条自定义输入已被撤回，将不参与最终投票。", reply=message_id)
-        LOG.info(f"群 {group_id} 用户撤回了自定义输入 (消息: {message_id})")
-
-    async def _start_next_round(self, group_id: str, assistant_response: str):
-        """开启一个新回合的通用函数"""
-        LOG.debug(f"[{self.name}] 正在开启新回合，群ID: {group_id}")
-        if not self.renderer or not self.db or not self.db.conn: return
-
-        image_filename = f"round_{group_id}_{uuid.uuid4()}"
-        LOG.debug(f"[{self.name}] 渲染新场景图片: {image_filename}")
-        image_path = await self.renderer.render(assistant_response, image_filename)
-        if not image_path:
-            LOG.error(f"[{self.name}] 渲染新场景失败。")
-            await self.api.post_group_msg(group_id, text="❌ 渲染新场景失败，游戏中断。")
-            return
-        
-        LOG.debug(f"[{self.name}] 发送新场景图片...")
-        main_message_id = await self.api.post_group_file(group_id, image=image_path)
-        if not main_message_id:
-            LOG.error(f"[{self.name}] 发送新场景失败。")
-            await self.api.post_group_msg(group_id, text="❌ 发送新场景失败，游戏中断。")
-            return
-        LOG.debug(f"[{self.name}] 新场景图片发送成功，消息ID: {main_message_id}")
-
-        LOG.debug(f"[{self.name}] 为新主消息 {main_message_id} 贴上表情...")
-        emoji_map = {
-            'A': 127822, 'B': 9973, 'C': 128663, 'D': 128054,
-            'E': 127859, 'F': 128293, 'G': 128123,
-            'Confirm': 127881, 'Deny': 128560, 'Retract': 10060
-        }
-        for _, emoji_id in emoji_map.items():
-            try:
-                await self.api.set_msg_emoji_like(main_message_id, emoji_id)
-            except Exception as e:
-                LOG.warning(f"为消息 {main_message_id} 贴表情 {emoji_id} 失败: {e}")
-
-        async with self.db.conn.cursor() as cursor:
-            await cursor.execute("SELECT MAX(round_number) FROM rounds WHERE game_group_id = ?", (group_id,))
-            max_round = await cursor.fetchone()
-            next_round_number = (max_round[0] or 0) + 1 if max_round else 1
-            LOG.debug(f"[{self.name}] 数据库中记录新回合，回合号: {next_round_number}")
-            
-            await cursor.execute(
-                "INSERT INTO rounds (game_group_id, round_number, main_message_id, assistant_response) VALUES (?, ?, ?, ?)",
-                (group_id, next_round_number, main_message_id, assistant_response)
-            )
-        await self.db.conn.commit()
-        LOG.info(f"群 {group_id} 第 {next_round_number} 回合已开始，主消息 ID: {main_message_id}")
+        if self.event_handler:
+            await self.event_handler.handle_emoji_reaction(event)
