@@ -66,10 +66,9 @@ class MessageCompressorPlugin(NcatBotPlugin):
         # 如果缓存中没有，则从 API 获取
         return await self._fetch_bot_admin_status(group_id)
 
-    async def _is_group_admin(self, event: GroupMessageEvent) -> bool:
+    def _is_group_admin(self, event: GroupMessageEvent) -> bool:
         """检查消息发送者是否为群管理员或群主"""
-        member_info = await self.api.get_group_member_info(event.group_id, event.user_id)
-        return member_info.role in ["admin", "owner"]
+        return event.sender.role in ["admin", "owner"]
 
     @on_notice
     async def _handle_admin_change_notice(self, event: NoticeEvent):
@@ -99,6 +98,9 @@ class MessageCompressorPlugin(NcatBotPlugin):
 
         # 过滤掉机器人自身的消息或@机器人的消息
         if event.user_id == self.bot_id or f"[CQ:at,qq={self.bot_id}]" in event.raw_message:
+            return
+        
+        if self._is_group_admin(event):
             return
 
         # 将消息加入缓冲区
@@ -190,7 +192,7 @@ class MessageCompressorPlugin(NcatBotPlugin):
         # 首次接收消息时，记录 bot 的 ID
         if self.bot_id is None:
             self.bot_id = event.self_id
-        if not await self._is_group_admin(event):
+        if not self._is_group_admin(event):
             await event.reply("抱歉，只有群管理员或群主才能使用此命令。")
             return
 
