@@ -134,3 +134,104 @@ class Database:
         async with self.conn.cursor() as cursor:
             await cursor.execute("UPDATE games SET is_frozen = ? WHERE game_id = ?", (is_frozen, game_id))
             await self.conn.commit()
+
+    async def update_candidate_custom_input_ids(self, game_id: int, candidate_ids_json: str):
+        """更新候选自定义输入ID"""
+        if not self.conn: return
+        async with self.conn.cursor() as cursor:
+            await cursor.execute("UPDATE games SET candidate_custom_input_ids = ? WHERE game_id = ?", (candidate_ids_json, game_id))
+            await self.conn.commit()
+
+    async def get_host_user_id(self, channel_id: str) -> str | None:
+        """获取游戏主持人ID"""
+        if not self.conn: return None
+        async with self.conn.cursor() as cursor:
+            await cursor.execute("SELECT host_user_id FROM games WHERE channel_id = ?", (channel_id,))
+            result = await cursor.fetchone()
+            return result[0] if result else None
+
+    async def create_game(self, channel_id: str, user_id: str, system_prompt: str) -> int | None:
+        """创建新游戏并返回 game_id"""
+        if not self.conn: return None
+        async with self.conn.cursor() as cursor:
+            await cursor.execute(
+                "INSERT INTO games (channel_id, host_user_id, system_prompt) VALUES (?, ?, ?)",
+                (channel_id, user_id, system_prompt)
+            )
+            await self.conn.commit()
+            return cursor.lastrowid
+
+    async def create_round(self, game_id: int, parent_id: int, player_choice: str, assistant_response: str) -> int | None:
+        """创建新回合并返回 round_id"""
+        if not self.conn: return None
+        async with self.conn.cursor() as cursor:
+            await cursor.execute(
+                "INSERT INTO rounds (game_id, parent_id, player_choice, assistant_response) VALUES (?, ?, ?, ?)",
+                (game_id, parent_id, player_choice, assistant_response)
+            )
+            await self.conn.commit()
+            return cursor.lastrowid
+
+    async def create_branch(self, game_id: int, name: str, tip_round_id: int) -> int | None:
+        """创建新分支并返回 branch_id"""
+        if not self.conn: return None
+        async with self.conn.cursor() as cursor:
+            await cursor.execute(
+                "INSERT INTO branches (game_id, name, tip_round_id) VALUES (?, ?, ?)",
+                (game_id, name, tip_round_id)
+            )
+            await self.conn.commit()
+            return cursor.lastrowid
+
+    async def update_game_head_branch(self, game_id: int, branch_id: int):
+        """更新游戏的 head_branch_id"""
+        if not self.conn: return
+        async with self.conn.cursor() as cursor:
+            await cursor.execute("UPDATE games SET head_branch_id = ? WHERE game_id = ?", (branch_id, game_id))
+            await self.conn.commit()
+
+    async def get_game_and_head_branch_info(self, game_id: int):
+        """获取游戏和 head 分支信息"""
+        if not self.conn: return None
+        async with self.conn.cursor() as cursor:
+            cursor.row_factory = aiosqlite.Row
+            await cursor.execute(
+                """SELECT g.channel_id, b.tip_round_id
+                   FROM games g
+                   JOIN branches b ON g.head_branch_id = b.branch_id
+                   WHERE g.game_id = ?""",
+                (game_id,)
+            )
+            return await cursor.fetchone()
+
+    async def get_round_info(self, round_id: int):
+        """获取回合信息"""
+        if not self.conn: return None
+        async with self.conn.cursor() as cursor:
+            cursor.row_factory = aiosqlite.Row
+            await cursor.execute("SELECT * FROM rounds WHERE round_id = ?", (round_id,))
+            return await cursor.fetchone()
+    
+    async def update_game_main_message(self, game_id: int, main_message_id: str):
+        """更新游戏的主消息ID"""
+        if not self.conn: return
+        async with self.conn.cursor() as cursor:
+            await cursor.execute(
+                "UPDATE games SET main_message_id = ?, candidate_custom_input_ids = '[]' WHERE game_id = ?",
+                (main_message_id, game_id)
+            )
+            await self.conn.commit()
+
+    async def revert_branch_tip(self, branch_id: int, round_id: int):
+        """回退分支的 tip_round_id"""
+        if not self.conn: return
+        async with self.conn.cursor() as cursor:
+            await cursor.execute("UPDATE branches SET tip_round_id = ? WHERE branch_id = ?", (round_id, branch_id))
+            await self.conn.commit()
+            
+    async def delete_game(self, game_id: int):
+        """删除游戏"""
+        if not self.conn: return
+        async with self.conn.cursor() as cursor:
+            await cursor.execute("DELETE FROM games WHERE game_id = ?", (game_id,))
+            await self.conn.commit()
