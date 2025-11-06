@@ -23,11 +23,15 @@ EMOJI = {
     "A": 127822, "B": 9973, "C": 128663, "D": 128054,
     "E": 127859, "F": 128293, "G": 128123,
     # 管理员确认/否决（主贴）
-    "CONFIRM": 9989,   # ✅
-    "DENY": 10060,     # ❌
+    "CONFIRM": 127881,   # 🎉
+    "DENY": 128560,      # 😰
+    "RETRACT": 10060,     # ❌
     # 自定义输入投票
     "YAY": 127881,     # 🎉
     "NAY": 128560,     # 😰
+    "CANCEL": 10060,  # ❌
+    # 频道繁忙
+    "COFFEE": 9749,  # ☕
 }
 
 import base64
@@ -135,7 +139,7 @@ class AITRPGPlugin(NcatBotPlugin):
                 return
 
             if self.db and await self.db.is_game_running(str(event.group_id)):
-                await self.api.set_msg_emoji_like(reply_message_id, str(EMOJI["DENY"]))      # 取消
+                await self.api.set_msg_emoji_like(reply_message_id, str(EMOJI["COFFEE"]))      # 频道繁忙
             else:
                 await self.api.set_msg_emoji_like(reply_message_id, str(EMOJI["CONFIRM"]))  # 确认
             
@@ -192,7 +196,7 @@ class AITRPGPlugin(NcatBotPlugin):
     @on_notice
     async def handle_emoji_reaction(self, event: NoticeEvent):
         """处理表情回应，包括游戏启动、投票、撤回等"""
-        if event.notice_type != "group_msg_emoji_like":
+        if event.notice_type != "group_msg_emoji_like" or event.user_id == event.self_id:
             return
 
         # 检查是否是待处理的新游戏
@@ -221,11 +225,11 @@ class AITRPGPlugin(NcatBotPlugin):
         group_id = str(event.group_id)
         message_id = str(event.message_id)
 
-        if event.emoji_like_id == str(EMOJI["DENY"]):   # 取消
+        if event.emoji_like_id == str(EMOJI["COFFEE"]):   # 频道繁忙
             try:
                 await self.api.delete_msg(pending_game["message_id"])
                 await self.api.set_msg_emoji_like(message_id, str(EMOJI["CONFIRM"]), set=False)
-                await self.api.set_msg_emoji_like(message_id, str(EMOJI["DENY"]))
+                await self.api.set_msg_emoji_like(message_id, str(EMOJI["COFFEE"]))
                 await self.api.post_group_msg(group_id, " 新游戏创建已取消。", at=event.user_id, reply=message_id)
                 LOG.info(f"用户 {event.user_id} 取消了新游戏创建请求。")
             except Exception as e:
@@ -236,12 +240,12 @@ class AITRPGPlugin(NcatBotPlugin):
         elif event.emoji_like_id == str(EMOJI["CONFIRM"]):  # 确认
             if self.db and await self.db.is_game_running(group_id):
                 await self.api.post_group_msg(group_id, " 当前已有正在进行的游戏，无法创建新游戏。", at=event.user_id, reply=message_id)
-                await self.api.set_msg_emoji_like(message_id, str(EMOJI["DENY"]))
+                await self.api.set_msg_emoji_like(message_id, str(EMOJI["COFFEE"]))
                 await self.api.set_msg_emoji_like(message_id, str(EMOJI["CONFIRM"]), set=False)
                 return
             
             await self.api.set_msg_emoji_like(message_id, str(EMOJI["CONFIRM"]))
-            await self.api.set_msg_emoji_like(message_id, str(EMOJI["DENY"]), set=False)
+            await self.api.set_msg_emoji_like(message_id, str(EMOJI["COFFEE"]), set=False)
             del self.pending_new_games[message_id]
             
             await self.start_new_game(
@@ -388,12 +392,12 @@ class AITRPGPlugin(NcatBotPlugin):
                 await self.db.conn.commit()
 
             # 5. 添加表情回应
-            emoji_map = {
-                'A': EMOJI["A"], 'B': EMOJI["B"], 'C': EMOJI["C"], 'D': EMOJI["D"],
-                'E': EMOJI["E"], 'F': EMOJI["F"], 'G': EMOJI["G"],
-                'Confirm': EMOJI["CONFIRM"], 'Deny': EMOJI["DENY"]
-            }
-            for _, emoji_id in emoji_map.items():
+            emoji_list = [
+                EMOJI["A"], EMOJI["B"], EMOJI["C"], EMOJI["D"],
+                EMOJI["E"], EMOJI["F"], EMOJI["G"],
+                EMOJI["CONFIRM"], EMOJI["DENY"], EMOJI["RETRACT"]
+            ]
+            for emoji_id in emoji_list:
                 try:
                     await self.api.set_msg_emoji_like(main_message_id, emoji_id)
                 except Exception as e:
@@ -422,40 +426,41 @@ class AITRPGPlugin(NcatBotPlugin):
         elif message_id in self.vote_cache and emoji_id in self.vote_cache[message_id]:
             self.vote_cache[message_id][emoji_id].discard(user_id)
 
-        # 检查是否是管理员/主持人操作
-        is_admin_or_host = await self._is_group_admin_or_host(group_id, user_id)
-        if is_admin_or_host:
-            # 确认或否决回合
-            if emoji_id in [EMOJI["CONFIRM"], EMOJI["DENY"]]:
-                async with self.db.conn.cursor() as cursor:
-                    await cursor.execute("SELECT game_id FROM games WHERE main_message_id = ?", (message_id,))
-                    game = await cursor.fetchone()
-                    if game:
-                        if emoji_id == EMOJI["CONFIRM"]:
-                            await self._tally_and_advance(game[0])
-                        else:
-                            await self.api.post_group_msg(group_id, text="本轮投票已被管理员/主持人作废，将重新开始本轮。", reply=message_id)
-                            await self.checkout_head(game[0])
-                        return
+        # 先把main_message_id和candidate_custom_input_ids都查出来
+        async with self.db.conn.cursor() as cursor:
+            await cursor.execute("SELECT game_id, main_message_id, candidate_custom_input_ids FROM games WHERE channel_id = ?", (group_id,))
+            game = await cursor.fetchone()
+            if not game:
+                return
+            game_id, main_message_id, candidate_ids_json = game
+            candidate_ids: list = json.loads(candidate_ids_json)
 
-        # 检查是否是撤回自定义输入
-        if emoji_id == EMOJI["DENY"]: # ❌ (沿用旧版表情作为撤回)
+        is_admin_or_host = await self._is_group_admin_or_host(group_id, user_id)
+
+        # 处理管理员/主持人往main_message_id上贴表情的行为
+        if message_id == str(main_message_id) and is_admin_or_host:
+            # 判断三种操作
+            if emoji_id == EMOJI["CONFIRM"]:
+                await self._tally_and_advance(int(game_id))
+                return
+            elif emoji_id == EMOJI["DENY"]:
+                await self.api.post_group_msg(group_id, text="本轮投票已被管理员/主持人作废，将重新开始本轮。", reply=message_id)
+                await self.checkout_head(int(game_id))
+                return
+            elif emoji_id == EMOJI["RETRACT"]:
+                pass
+
+        # 处理管理员/主持人撤回自定义输入的行为
+        if message_id in candidate_ids and is_admin_or_host and emoji_id == EMOJI["CANCEL"]:
+            candidate_ids.remove(message_id)
             async with self.db.conn.cursor() as cursor:
-                await cursor.execute("SELECT game_id, candidate_custom_input_ids FROM games WHERE channel_id = ?", (group_id,))
-                game = await cursor.fetchone()
-                if game:
-                    game_id, candidate_ids_json = game
-                    candidate_ids = json.loads(candidate_ids_json)
-                    if message_id in candidate_ids:
-                        # 权限检查：只有作者或管理员/主持人可以撤回
-                        # (简化：此处仅检查是否是管理员/主持人，实际可查询消息发送者)
-                        if is_admin_or_host: # 实际应更复杂
-                            candidate_ids.remove(message_id)
-                            await cursor.execute("UPDATE games SET candidate_custom_input_ids = ? WHERE game_id = ?", (json.dumps(candidate_ids), game_id))
-                            await self.db.conn.commit()
-                            await self.api.post_group_msg(group_id, text="一条自定义输入已被撤回。", reply=message_id)
-                            # 从缓存中删除
-                            self.vote_cache.pop(message_id, None)
+                await cursor.execute("UPDATE games SET candidate_custom_input_ids = ? WHERE channel_id = ?", (json.dumps(candidate_ids), group_id))
+                await self.db.conn.commit()
+            await self.api.post_group_msg(group_id, text=" 一条自定义输入已被撤回。", reply=message_id)
+            # 从缓存中删除
+            self.vote_cache.pop(message_id, None)
+            return
+
 
     async def _tally_votes(self, main_message_id: str, candidate_ids_json: str) -> tuple[dict[str, int], list[str]]:
         """计票并返回分数和结果文本"""
@@ -483,7 +488,7 @@ class AITRPGPlugin(NcatBotPlugin):
             try:
                 msg_event = await self.api.get_msg(cid)
                 content = "".join(s.text for s in msg_event.message.filter_text())
-                result_lines.append(f'- 自定义输入 "{content[:20]}...": {net_score} 票')
+                result_lines.append(f'- 自定义输入 "{content}": {net_score} 票')
             except:
                 result_lines.append(f"- 自定义输入 (ID: {cid}): {net_score} 票")
         
@@ -532,13 +537,14 @@ class AITRPGPlugin(NcatBotPlugin):
             return
 
         # 2. 找出胜利者并获取内容
-        winner_id = max(scores, key=lambda k: scores[k])
-        winner_content = ""
-        if len(winner_id) == 1 and 'A' <= winner_id <= 'G':
-            winner_content = f"选择选项 {winner_id}"
+        max_score = max(scores.values())
+        winners = [k for k, v in scores.items() if v == max_score]
+        winner_content = "\n".join(map(lambda x: f"选择选项 {x}" if x in 'ABCDEFG' else "".join(s.text for s in (await self.api.get_msg(x)).message.filter_text()), winners))
+        if len(winners) == 1 and 'A' <= winners[0] <= 'G':
+            winner_content = f"选择选项 {winners[0]}"
         else:
             try:
-                msg_event = await self.api.get_msg(winner_id)
+                msg_event = await self.api.get_msg(winners[0])
                 winner_content = "".join(s.text for s in msg_event.message.filter_text())
             except Exception as e:
                 LOG.error(f"获取胜利者自定义输入内容失败: {e}")
