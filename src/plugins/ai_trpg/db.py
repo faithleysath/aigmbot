@@ -13,6 +13,7 @@ class Database:
         """连接到数据库并进行初始化"""
         try:
             self.conn = await aiosqlite.connect(self.db_path)
+            self.conn.row_factory = aiosqlite.Row
             await self.init_db()
             LOG.info(f"成功连接并初始化数据库: {self.db_path}")
         except Exception as e:
@@ -146,7 +147,6 @@ class Database:
         if not self.conn:
             return None
         async with self.conn.cursor() as cursor:
-            cursor.row_factory = aiosqlite.Row
             await cursor.execute(
                 "SELECT * FROM games WHERE channel_id = ?", (channel_id,)
             )
@@ -244,7 +244,6 @@ class Database:
         if not self.conn:
             return None
         async with self.conn.cursor() as cursor:
-            cursor.row_factory = aiosqlite.Row
             await cursor.execute(
                 """SELECT g.channel_id, b.tip_round_id
                    FROM games g
@@ -259,7 +258,6 @@ class Database:
         if not self.conn:
             return None
         async with self.conn.cursor() as cursor:
-            cursor.row_factory = aiosqlite.Row
             await cursor.execute("SELECT * FROM rounds WHERE round_id = ?", (round_id,))
             return await cursor.fetchone()
 
@@ -274,8 +272,8 @@ class Database:
             )
             await self.conn.commit()
 
-    async def revert_branch_tip(self, branch_id: int, round_id: int):
-        """回退分支的 tip_round_id"""
+    async def update_branch_tip(self, branch_id: int, round_id: int):
+        """更新分支的 tip_round_id (用于推进或回退)"""
         if not self.conn:
             return
         async with self.conn.cursor() as cursor:

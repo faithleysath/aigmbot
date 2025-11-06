@@ -833,7 +833,7 @@ class AITRPGPlugin(NcatBotPlugin):
             if not new_round_id:
                 raise Exception("创建新 round 失败")
 
-            await self.db.revert_branch_tip(head_branch_id, new_round_id)
+            await self.db.update_branch_tip(head_branch_id, new_round_id)
 
             # 6. 清理并进入下一轮
             self.vote_cache[channel_id] = {}
@@ -880,7 +880,7 @@ class AITRPGPlugin(NcatBotPlugin):
                 if not head_branch_id_tuple:
                     raise Exception("找不到游戏的 head_branch_id")
                 head_branch_id = head_branch_id_tuple[0]
-                await self.db.revert_branch_tip(head_branch_id, parent_id)
+                await self.db.update_branch_tip(head_branch_id, parent_id)
 
             LOG.info(f"游戏 {game_id} 已成功回退到 round {parent_id}。")
             await self.api.post_group_msg(
