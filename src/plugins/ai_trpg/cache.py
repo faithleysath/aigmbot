@@ -26,6 +26,7 @@ class CacheManager:
         self._io_lock = asyncio.Lock()
         self._cache_lock = asyncio.Lock()  # 保护内存缓存并发
         self._last_save_ts = 0.0
+        self._loaded = False  # 防止运行期被重复加载导致状态回退
 
     # --- Pending Games ---
     async def add_pending_game(self, message_id: str, game_data: dict):
@@ -92,7 +93,12 @@ class CacheManager:
 
     async def load_from_disk(self):
         """从磁盘加载缓存文件"""
+        # 防止运行期再次调用把内存状态覆盖回旧盘态
+        if self._loaded:
+            LOG.warning("缓存已加载过，重复加载被忽略。")
+            return
         if not self.cache_path or not await aio_os.path.exists(str(self.cache_path)):
+            self._loaded = True
             return
 
         # 先只做 IO 与反序列化（仅持有 _io_lock）
@@ -121,6 +127,8 @@ class CacheManager:
                         vote_cache_restored[group_id][msg_id] = item
             except Exception as e:
                 LOG.error(f"从磁盘加载缓存失败: {e}", exc_info=True)
+                # 即使失败也标为已尝试加载，避免运行中再次触发
+                self._loaded = True
                 return
 
         # 再切换内存引用（仅持有 _cache_lock，避免与 save_to_disk 形成反转）
@@ -128,6 +136,7 @@ class CacheManager:
             self.pending_new_games = pending_new_games_restored
             self.vote_cache = vote_cache_restored
         LOG.info("成功从磁盘加载缓存。")
+        self._loaded = True
 
     async def save_to_disk(self, force: bool = False):
         """将当前缓存保存到磁盘"""
