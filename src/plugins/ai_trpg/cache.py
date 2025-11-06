@@ -6,6 +6,7 @@ import aiofiles
 import aiofiles.os as aio_os
 from typing import TypedDict, NotRequired
 import asyncio
+import time
 
 from ncatbot.utils import get_log
 
@@ -57,17 +58,17 @@ class CacheManager:
             except Exception as e:
                 LOG.error(f"从磁盘加载缓存失败: {e}", exc_info=True)
 
-    async def save_to_disk(self):
+    async def save_to_disk(self, force: bool = False):
         """将当前缓存保存到磁盘"""
         if not self.cache_path:
             return
-        
-        now = asyncio.get_event_loop().time()
-        if now - self._last_save_ts < 0.3:
-            return
-        self._last_save_ts = now
 
         async with self._io_lock:
+            # —— 把节流判断移动到锁内，并支持 force 直通 ——
+            now = asyncio.get_running_loop().time()  # 或者 time.monotonic()
+            if not force and (now - self._last_save_ts) < 0.3:
+                return
+
             try:
                 serializable_pending = {}
                 for key, game in self.pending_new_games.items():
@@ -94,5 +95,9 @@ class CacheManager:
 
                 async with aiofiles.open(self.cache_path, "w", encoding="utf-8") as f:
                     await f.write(json.dumps(data, indent=4, ensure_ascii=False))
+
+                # —— 只有真正写成功后才更新时间戳 ——
+                self._last_save_ts = now
+
             except Exception as e:
                 LOG.error(f"保存缓存到磁盘失败: {e}", exc_info=True)

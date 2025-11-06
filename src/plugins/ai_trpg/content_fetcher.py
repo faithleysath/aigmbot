@@ -26,7 +26,8 @@ class ContentFetcher:
                 # 统一用 setdefault，避免 KeyError 并确保写回
                 entry = group_vote_cache.setdefault(message_id, {"votes": {}})
                 entry["content"] = content
-                await self.cache_manager.save_to_disk()
+                # 自定义输入内容写回可考虑强制落盘，避免丢失
+                await self.cache_manager.save_to_disk(force=True)
             except Exception as e:
                 LOG.warning(f"获取消息 {message_id} 内容失败: {e}")
                 content = f"自定义输入 (ID: {message_id})"
