@@ -1,4 +1,4 @@
-# src/plugins/ai_trpg/cache.py
+# File: src/plugins/ai_trpg/cache.py
 import json
 from datetime import datetime
 from pathlib import Path
@@ -23,28 +23,29 @@ class CacheManager:
         self.pending_new_games: dict[str, dict] = {}
         self.vote_cache: dict[str, dict[str, VoteCacheItem]] = {}
         self._io_lock = asyncio.Lock()
-        self._cache_lock = asyncio.Lock()  # 新增：保护内存缓存的并发更新
+        self._cache_lock = asyncio.Lock()  # 保护内存缓存并发
         self._last_save_ts = 0.0
 
     async def load_from_disk(self):
         """从磁盘加载缓存文件"""
         if not self.cache_path or not await aio_os.path.exists(str(self.cache_path)):
             return
+
+        # 先只做 IO 与反序列化（仅持有 _io_lock）
         async with self._io_lock:
             try:
                 async with aiofiles.open(self.cache_path, "r", encoding="utf-8") as f:
                     content = await f.read()
                     payload = json.loads(content)
 
-                # 恢复 pending_new_games
+                # 先在本地变量里“组装好”恢复结果
                 pending_new_games_restored = payload.get("pending_new_games", {})
                 for key, game in pending_new_games_restored.items():
                     if "create_time" in game and isinstance(game["create_time"], str):
                         game["create_time"] = datetime.fromisoformat(game["create_time"])
 
-                # 恢复 vote_cache
                 raw_vote_cache = payload.get("vote_cache", {})
-                vote_cache_restored = {}
+                vote_cache_restored: dict[str, dict[str, VoteCacheItem]] = {}
                 for group_id, messages in raw_vote_cache.items():
                     vote_cache_restored[group_id] = {}
                     for msg_id, item_payload in messages.items():
@@ -54,54 +55,56 @@ class CacheManager:
                         if "votes" in item_payload:
                             item["votes"] = {str(k): set(v) for k, v in item_payload["votes"].items()}
                         vote_cache_restored[group_id][msg_id] = item
-                
-                async with self._cache_lock:
-                    self.pending_new_games = pending_new_games_restored
-                    self.vote_cache = vote_cache_restored
-                LOG.info("成功从磁盘加载缓存。")
             except Exception as e:
                 LOG.error(f"从磁盘加载缓存失败: {e}", exc_info=True)
+                return
+
+        # 再切换内存引用（仅持有 _cache_lock，避免与 save_to_disk 形成反转）
+        async with self._cache_lock:
+            self.pending_new_games = pending_new_games_restored
+            self.vote_cache = vote_cache_restored
+        LOG.info("成功从磁盘加载缓存。")
 
     async def save_to_disk(self, force: bool = False):
         """将当前缓存保存到磁盘"""
         if not self.cache_path:
             return
 
+        # 先在 _cache_lock 下做“稳定快照/序列化材料”，避免读到半更新状态
+        async with self._cache_lock:
+            # 构造可序列化的 pending_new_games
+            serializable_pending = {}
+            for key, game in self.pending_new_games.items():
+                game_data = game.copy()
+                if "create_time" in game_data and isinstance(game_data["create_time"], datetime):
+                    game_data["create_time"] = game_data["create_time"].isoformat()
+                serializable_pending[key] = game_data
+
+            # 构造可序列化的 vote_cache（set -> list）
+            serializable_votes = {
+                group_id: {
+                    msg_id: {
+                        "content": item.get("content"),
+                        "votes": {emoji_id: list(users) for emoji_id, users in item.get("votes", {}).items()},
+                    }
+                    for msg_id, item in messages.items()
+                }
+                for group_id, messages in self.vote_cache.items()
+            }
+
+            data = {
+                "pending_new_games": serializable_pending,
+                "vote_cache": serializable_votes,
+            }
+
+        # 再拿 _io_lock 做节流与写盘（注意锁顺序统一：先 _cache_lock 再 _io_lock）
         async with self._io_lock:
-            # —— 把节流判断移动到锁内，并支持 force 直通 ——
-            now = asyncio.get_running_loop().time()  # 或者 time.monotonic()
+            now = asyncio.get_running_loop().time()
             if not force and (now - self._last_save_ts) < 0.3:
                 return
-
             try:
-                serializable_pending = {}
-                for key, game in self.pending_new_games.items():
-                    game_data = game.copy()
-                    if "create_time" in game_data and isinstance(game_data["create_time"], datetime):
-                        game_data["create_time"] = game_data["create_time"].isoformat()
-                    serializable_pending[key] = game_data
-
-                serializable_votes = {
-                    group_id: {
-                        msg_id: {
-                            "content": item.get("content"),
-                            "votes": {emoji_id: list(users) for emoji_id, users in item.get("votes", {}).items()},
-                        }
-                        for msg_id, item in messages.items()
-                    }
-                    for group_id, messages in self.vote_cache.items()
-                }
-
-                data = {
-                    "pending_new_games": serializable_pending,
-                    "vote_cache": serializable_votes,
-                }
-
                 async with aiofiles.open(self.cache_path, "w", encoding="utf-8") as f:
                     await f.write(json.dumps(data, indent=4, ensure_ascii=False))
-
-                # —— 只有真正写成功后才更新时间戳 ——
                 self._last_save_ts = now
-
             except Exception as e:
                 LOG.error(f"保存缓存到磁盘失败: {e}", exc_info=True)
