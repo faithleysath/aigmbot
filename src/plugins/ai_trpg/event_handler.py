@@ -156,7 +156,7 @@ class EventHandler:
         """处理表情回应，包括游戏启动、投票、撤回等"""
         if (
             event.notice_type != "group_msg_emoji_like"
-            or event.user_id == event.self_id
+            or event.user_id == str(event.self_id)
         ):
             return
 

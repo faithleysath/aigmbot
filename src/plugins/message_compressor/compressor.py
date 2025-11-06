@@ -85,7 +85,7 @@ class MessageCompressorPlugin(NcatBotPlugin):
     async def on_group_message(self, event: GroupMessageEvent):
         # 首次接收消息时，记录 bot 的 ID
         if self.bot_id is None:
-            self.bot_id = event.self_id
+            self.bot_id = str(event.self_id)
 
         # 忽略命令消息或被禁用的群聊
         if event.raw_message.startswith('/') or not self.config["group_settings"].get(event.group_id, {}).get("enabled", True):
@@ -192,7 +192,7 @@ class MessageCompressorPlugin(NcatBotPlugin):
     async def compressor_main_command(self, event: GroupMessageEvent, action: str, val1: str = "", val2: str = ""):
         # 首次接收消息时，记录 bot 的 ID
         if self.bot_id is None:
-            self.bot_id = event.self_id
+            self.bot_id = str(event.self_id)
         if not self._is_group_admin(event):
             await event.reply("抱歉，只有群管理员或群主才能使用此命令。")
             return

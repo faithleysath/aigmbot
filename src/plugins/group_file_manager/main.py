@@ -50,7 +50,7 @@ class GroupFileManagerPlugin(NcatBotPlugin):
     @command_registry.command("delete_root_files", description="删除群文件根目录下的所有文件")
     async def delete_root_files(self, event: GroupMessageEvent):
         group_id = event.group_id
-        bot_id = event.self_id
+        bot_id = str(event.self_id)
 
         try:
             bot_member_info = await self.api.get_group_member_info(group_id=group_id, user_id=bot_id)
