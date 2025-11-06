@@ -4,6 +4,7 @@ from ncatbot.utils import get_log
 
 LOG = get_log(__name__)
 
+
 class MarkdownRenderer:
     def __init__(self):
         self.md = MarkdownIt("commonmark").disable("html_block").disable("html_inline")
@@ -35,7 +36,7 @@ class MarkdownRenderer:
         """
         try:
             html_content = self.md.render(markdown_text)
-            
+
             # 添加一些基础样式以改善外观
             html_with_style = f"""
             <!DOCTYPE html>
@@ -84,10 +85,12 @@ class MarkdownRenderer:
             browser = await self._ensure_browser()
             page = await browser.new_page()
             await page.set_content(html_with_style)
-            
+
             # 截图 body 元素以获得准确的内容尺寸
-            element = await page.query_selector('body')
-            image_bytes = await (element.screenshot() if element else page.screenshot(full_page=True))
+            element = await page.query_selector("body")
+            image_bytes = await (
+                element.screenshot() if element else page.screenshot(full_page=True)
+            )
             await page.close()
 
             LOG.info("Markdown 成功渲染为图片二进制数据。")
@@ -97,5 +100,7 @@ class MarkdownRenderer:
             LOG.error(f"Markdown 渲染失败: {e}")
             # 确保 Playwright 的浏览器驱动已安装
             if "Executable doesn't exist" in str(e):
-                LOG.error("Playwright browser is not installed. Please run 'playwright install' in your terminal.")
+                LOG.error(
+                    "Playwright browser is not installed. Please run 'playwright install' in your terminal."
+                )
             return None

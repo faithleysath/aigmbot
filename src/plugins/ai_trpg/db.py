@@ -3,6 +3,7 @@ from ncatbot.utils import get_log
 
 LOG = get_log(__name__)
 
+
 class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -29,13 +30,14 @@ class Database:
         if not self.conn:
             LOG.error("数据库未连接，无法初始化。")
             return
-            
+
         async with self.conn.cursor() as cursor:
             # 启用外键约束
             await cursor.execute("PRAGMA foreign_keys = ON;")
 
             # 创建 games 表
-            await cursor.execute("""
+            await cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS games (
                     game_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     channel_id TEXT UNIQUE,
@@ -49,10 +51,12 @@ class Database:
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (head_branch_id) REFERENCES branches (branch_id) ON DELETE SET NULL
                 );
-            """)
+            """
+            )
 
             # 创建 branches 表
-            await cursor.execute("""
+            await cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS branches (
                     branch_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     game_id INTEGER NOT NULL,
@@ -64,10 +68,12 @@ class Database:
                     FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE,
                     FOREIGN KEY (tip_round_id) REFERENCES rounds (round_id) ON DELETE SET NULL
                 );
-            """)
+            """
+            )
 
             # 创建 rounds 表
-            await cursor.execute("""
+            await cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS rounds (
                     round_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     game_id INTEGER NOT NULL,
@@ -77,10 +83,12 @@ class Database:
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE
                 );
-            """)
-            
+            """
+            )
+
             # 创建触发器，用于自动更新 games 表的 updated_at
-            await cursor.execute("""
+            await cursor.execute(
+                """
                 CREATE TRIGGER IF NOT EXISTS update_game_updated_at
                 AFTER UPDATE ON games
                 FOR EACH ROW
@@ -88,10 +96,12 @@ class Database:
                 BEGIN
                     UPDATE games SET updated_at = CURRENT_TIMESTAMP WHERE game_id = OLD.game_id;
                 END;
-            """)
+            """
+            )
 
             # 创建触发器，用于自动更新 branches 表的 updated_at
-            await cursor.execute("""
+            await cursor.execute(
+                """
                 CREATE TRIGGER IF NOT EXISTS update_branch_updated_at
                 AFTER UPDATE ON branches
                 FOR EACH ROW
@@ -99,13 +109,22 @@ class Database:
                 BEGIN
                     UPDATE branches SET updated_at = CURRENT_TIMESTAMP WHERE branch_id = OLD.branch_id;
                 END;
-            """)
+            """
+            )
 
             # 创建索引
-            await cursor.execute("CREATE INDEX IF NOT EXISTS idx_games_channel ON games(channel_id);")
-            await cursor.execute("CREATE INDEX IF NOT EXISTS idx_games_main_msg ON games(main_message_id);")
-            await cursor.execute("CREATE INDEX IF NOT EXISTS idx_branches_game ON branches(game_id);")
-            await cursor.execute("CREATE INDEX IF NOT EXISTS idx_rounds_game ON rounds(game_id);")
+            await cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_games_channel ON games(channel_id);"
+            )
+            await cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_games_main_msg ON games(main_message_id);"
+            )
+            await cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_branches_game ON branches(game_id);"
+            )
+            await cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_rounds_game ON rounds(game_id);"
+            )
 
         if self.conn:
             await self.conn.commit()
@@ -116,83 +135,114 @@ class Database:
             LOG.error("数据库未连接，无法查询游戏状态。")
             return False
         async with self.conn.cursor() as cursor:
-            await cursor.execute("SELECT 1 FROM games WHERE channel_id = ?", (channel_id,))
+            await cursor.execute(
+                "SELECT 1 FROM games WHERE channel_id = ?", (channel_id,)
+            )
             result = await cursor.fetchone()
             return result is not None
 
     async def get_game_by_channel_id(self, channel_id: str):
         """通过 channel_id 获取游戏信息"""
-        if not self.conn: return None
+        if not self.conn:
+            return None
         async with self.conn.cursor() as cursor:
             cursor.row_factory = aiosqlite.Row
-            await cursor.execute("SELECT * FROM games WHERE channel_id = ?", (channel_id,))
+            await cursor.execute(
+                "SELECT * FROM games WHERE channel_id = ?", (channel_id,)
+            )
             return await cursor.fetchone()
 
     async def set_game_frozen_status(self, game_id: int, is_frozen: bool):
         """设置游戏的冻结状态"""
-        if not self.conn: return
+        if not self.conn:
+            return
         async with self.conn.cursor() as cursor:
-            await cursor.execute("UPDATE games SET is_frozen = ? WHERE game_id = ?", (is_frozen, game_id))
+            await cursor.execute(
+                "UPDATE games SET is_frozen = ? WHERE game_id = ?", (is_frozen, game_id)
+            )
             await self.conn.commit()
 
-    async def update_candidate_custom_input_ids(self, game_id: int, candidate_ids_json: str):
+    async def update_candidate_custom_input_ids(
+        self, game_id: int, candidate_ids_json: str
+    ):
         """更新候选自定义输入ID"""
-        if not self.conn: return
+        if not self.conn:
+            return
         async with self.conn.cursor() as cursor:
-            await cursor.execute("UPDATE games SET candidate_custom_input_ids = ? WHERE game_id = ?", (candidate_ids_json, game_id))
+            await cursor.execute(
+                "UPDATE games SET candidate_custom_input_ids = ? WHERE game_id = ?",
+                (candidate_ids_json, game_id),
+            )
             await self.conn.commit()
 
     async def get_host_user_id(self, channel_id: str) -> str | None:
         """获取游戏主持人ID"""
-        if not self.conn: return None
+        if not self.conn:
+            return None
         async with self.conn.cursor() as cursor:
-            await cursor.execute("SELECT host_user_id FROM games WHERE channel_id = ?", (channel_id,))
+            await cursor.execute(
+                "SELECT host_user_id FROM games WHERE channel_id = ?", (channel_id,)
+            )
             result = await cursor.fetchone()
             return result[0] if result else None
 
-    async def create_game(self, channel_id: str, user_id: str, system_prompt: str) -> int | None:
+    async def create_game(
+        self, channel_id: str, user_id: str, system_prompt: str
+    ) -> int | None:
         """创建新游戏并返回 game_id"""
-        if not self.conn: return None
+        if not self.conn:
+            return None
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 "INSERT INTO games (channel_id, host_user_id, system_prompt) VALUES (?, ?, ?)",
-                (channel_id, user_id, system_prompt)
+                (channel_id, user_id, system_prompt),
             )
             await self.conn.commit()
             return cursor.lastrowid
 
-    async def create_round(self, game_id: int, parent_id: int, player_choice: str, assistant_response: str) -> int | None:
+    async def create_round(
+        self, game_id: int, parent_id: int, player_choice: str, assistant_response: str
+    ) -> int | None:
         """创建新回合并返回 round_id"""
-        if not self.conn: return None
+        if not self.conn:
+            return None
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 "INSERT INTO rounds (game_id, parent_id, player_choice, assistant_response) VALUES (?, ?, ?, ?)",
-                (game_id, parent_id, player_choice, assistant_response)
+                (game_id, parent_id, player_choice, assistant_response),
             )
             await self.conn.commit()
             return cursor.lastrowid
 
-    async def create_branch(self, game_id: int, name: str, tip_round_id: int) -> int | None:
+    async def create_branch(
+        self, game_id: int, name: str, tip_round_id: int
+    ) -> int | None:
         """创建新分支并返回 branch_id"""
-        if not self.conn: return None
+        if not self.conn:
+            return None
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 "INSERT INTO branches (game_id, name, tip_round_id) VALUES (?, ?, ?)",
-                (game_id, name, tip_round_id)
+                (game_id, name, tip_round_id),
             )
             await self.conn.commit()
             return cursor.lastrowid
 
     async def update_game_head_branch(self, game_id: int, branch_id: int):
         """更新游戏的 head_branch_id"""
-        if not self.conn: return
+        if not self.conn:
+            return
         async with self.conn.cursor() as cursor:
-            await cursor.execute("UPDATE games SET head_branch_id = ? WHERE game_id = ?", (branch_id, game_id))
+            await cursor.execute(
+                "UPDATE games SET head_branch_id = ? WHERE game_id = ?",
+                (branch_id, game_id),
+            )
             await self.conn.commit()
 
     async def get_game_and_head_branch_info(self, game_id: int):
         """获取游戏和 head 分支信息"""
-        if not self.conn: return None
+        if not self.conn:
+            return None
         async with self.conn.cursor() as cursor:
             cursor.row_factory = aiosqlite.Row
             await cursor.execute(
@@ -200,38 +250,45 @@ class Database:
                    FROM games g
                    JOIN branches b ON g.head_branch_id = b.branch_id
                    WHERE g.game_id = ?""",
-                (game_id,)
+                (game_id,),
             )
             return await cursor.fetchone()
 
     async def get_round_info(self, round_id: int):
         """获取回合信息"""
-        if not self.conn: return None
+        if not self.conn:
+            return None
         async with self.conn.cursor() as cursor:
             cursor.row_factory = aiosqlite.Row
             await cursor.execute("SELECT * FROM rounds WHERE round_id = ?", (round_id,))
             return await cursor.fetchone()
-    
+
     async def update_game_main_message(self, game_id: int, main_message_id: str):
         """更新游戏的主消息ID"""
-        if not self.conn: return
+        if not self.conn:
+            return
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 "UPDATE games SET main_message_id = ?, candidate_custom_input_ids = '[]' WHERE game_id = ?",
-                (main_message_id, game_id)
+                (main_message_id, game_id),
             )
             await self.conn.commit()
 
     async def revert_branch_tip(self, branch_id: int, round_id: int):
         """回退分支的 tip_round_id"""
-        if not self.conn: return
+        if not self.conn:
+            return
         async with self.conn.cursor() as cursor:
-            await cursor.execute("UPDATE branches SET tip_round_id = ? WHERE branch_id = ?", (round_id, branch_id))
+            await cursor.execute(
+                "UPDATE branches SET tip_round_id = ? WHERE branch_id = ?",
+                (round_id, branch_id),
+            )
             await self.conn.commit()
-            
+
     async def delete_game(self, game_id: int):
         """删除游戏"""
-        if not self.conn: return
+        if not self.conn:
+            return
         async with self.conn.cursor() as cursor:
             await cursor.execute("DELETE FROM games WHERE game_id = ?", (game_id,))
             await self.conn.commit()
