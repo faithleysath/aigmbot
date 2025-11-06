@@ -1,12 +1,12 @@
 from ncatbot.plugin_system import NcatBotPlugin, command_registry, on_notice, filter_registry
-from typing import cast, TypedDict, Literal, Any
+from typing import cast, TypedDict, Literal, Any, NotRequired
 from ncatbot.core.event import GroupMessageEvent, NoticeEvent
 from ncatbot.core.event.message_segment import File, Reply, At
 from ncatbot.utils import get_log
 from pathlib import Path
 import aiohttp
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import aiofiles
 import aiofiles.os as aio_os
 
@@ -19,6 +19,10 @@ LOG = get_log(__name__)
 class ChatMessage(TypedDict):
     role: Literal["system", "user", "assistant"]
     content: str
+
+class VoteCacheItem(TypedDict):
+    content: NotRequired[str]
+    votes: dict[str, set[str]]
 
 EMOJI = {
     # 主贴选项
@@ -42,6 +46,9 @@ def bytes_to_base64(b: bytes) -> str:
     """将字节数据转换为Base64字符串"""
     return base64.b64encode(b).decode('utf-8')
 
+def _normalize_emoji_id(emoji_id: Any) -> str:
+    """将表情ID统一转换为字符串"""
+    return str(emoji_id)
 
 class AITRPGPlugin(NcatBotPlugin):
     name = "AITRPGPlugin"
@@ -57,7 +64,7 @@ class AITRPGPlugin(NcatBotPlugin):
         self.data_path: Path = Path()
         self.cache_path: Path | None = None
         self.pending_new_games: dict[str, dict] = {}
-        self.vote_cache: dict[str, dict[str, dict[Any, Any]]] = {}
+        self.vote_cache: dict[str, dict[str, VoteCacheItem]] = {}
 
     async def _load_cache_from_disk(self):
         """从磁盘加载缓存文件"""
@@ -80,12 +87,16 @@ class AITRPGPlugin(NcatBotPlugin):
                 for group_id, messages in raw_vote_cache.items():
                     self.vote_cache[group_id] = {}
                     for msg_id, data in messages.items():
-                        self.vote_cache[group_id][msg_id] = {}
-                        if "content" in data:
-                            self.vote_cache[group_id][msg_id]["content"] = data["content"]
-                        for key, value in data.items():
-                            if key != "content":
-                                self.vote_cache[group_id][msg_id][int(key)] = set(value)
+                        item: VoteCacheItem = {"votes": {}}
+                        if "content" in data and data["content"] is not None:
+                            item["content"] = data["content"]
+                        
+                        if "votes" in data:
+                            item["votes"] = {
+                                _normalize_emoji_id(k): set(v)
+                                for k, v in data["votes"].items()
+                            }
+                        self.vote_cache[group_id][msg_id] = item
             LOG.info("成功从磁盘加载缓存。")
         except Exception as e:
             LOG.error(f"从磁盘加载缓存失败: {e}", exc_info=True)
@@ -103,17 +114,20 @@ class AITRPGPlugin(NcatBotPlugin):
                 }
                 for key, game in self.pending_new_games.items()
             }
-            serializable_votes = {}
-            for group_id, messages in self.vote_cache.items():
-                serializable_votes[group_id] = {}
-                for msg_id, data in messages.items():
-                    serializable_votes[group_id][msg_id] = {}
-                    if "content" in data:
-                        serializable_votes[group_id][msg_id]["content"] = data["content"]
-                    for key, value in data.items():
-                        if key != "content":
-                            serializable_votes[group_id][msg_id][key] = list(value)
-
+            serializable_votes = {
+                group_id: {
+                    msg_id: {
+                        "content": item.get("content"),
+                        "votes": {
+                            emoji_id: list(users)
+                            for emoji_id, users in item.get("votes", {}).items()
+                        },
+                    }
+                    for msg_id, item in messages.items()
+                }
+                for group_id, messages in self.vote_cache.items()
+            }
+            
             data = {
                 "pending_new_games": serializable_pending,
                 "vote_cache": serializable_votes,
@@ -179,7 +193,7 @@ class AITRPGPlugin(NcatBotPlugin):
         """处理群聊消息，包括文件上传启动和自定义输入"""
         # 文件上传启动游戏
         files = event.message.filter(File)
-        if files and files[0].file.endswith((".txt", ".md")):
+        if files and files[0].file.lower().endswith((".txt", ".md")):
             await self._handle_file_upload(event, files[0])
             return
 
@@ -223,7 +237,7 @@ class AITRPGPlugin(NcatBotPlugin):
                 "user_id": event.user_id,
                 "system_prompt": content,
                 "message_id": event.message_id,
-                "create_time": datetime.now(),
+                "create_time": datetime.now(timezone.utc),
             }
             await self._save_cache_to_disk()
         except Exception as e:
@@ -269,8 +283,10 @@ class AITRPGPlugin(NcatBotPlugin):
 
             # 将内容添加到缓存
             group_vote_cache = self.vote_cache.setdefault(group_id, {})
-            message_cache = group_vote_cache.setdefault(custom_input_message_id, {})
-            message_cache["content"] = custom_input_content
+            group_vote_cache[custom_input_message_id] = {
+                "content": custom_input_content,
+                "votes": {}
+            }
             await self._save_cache_to_disk()
             
             LOG.info(f"游戏 {game_id} 收到新的自定义输入: {custom_input_message_id}")
@@ -298,13 +314,14 @@ class AITRPGPlugin(NcatBotPlugin):
     
     async def _handle_new_game_confirmation(self, event: NoticeEvent):
         """处理新游戏创建的表情确认"""
-        pending_game = self.pending_new_games.get(str(event.message_id))
+        message_id_str = str(event.message_id)
+        pending_game = self.pending_new_games.get(message_id_str)
         if not pending_game:
             return
 
         # 清理过期的请求
-        if datetime.now() - pending_game["create_time"] > timedelta(minutes=5):
-            del self.pending_new_games[str(event.message_id)]
+        if datetime.now(timezone.utc) - pending_game["create_time"] > timedelta(minutes=5):
+            del self.pending_new_games[message_id_str]
             await self._save_cache_to_disk()
             return
 
@@ -313,31 +330,31 @@ class AITRPGPlugin(NcatBotPlugin):
             return
 
         group_id = str(event.group_id)
-        message_id = str(event.message_id)
+        emoji_id = _normalize_emoji_id(event.emoji_like_id)
 
-        if event.emoji_like_id == str(EMOJI["COFFEE"]):   # 频道繁忙
+        if emoji_id == _normalize_emoji_id(EMOJI["COFFEE"]):   # 频道繁忙
             try:
                 await self.api.delete_msg(pending_game["message_id"])
-                await self.api.set_msg_emoji_like(message_id, str(EMOJI["CONFIRM"]), set=False)
-                await self.api.set_msg_emoji_like(message_id, str(EMOJI["COFFEE"]))
-                await self.api.post_group_msg(group_id, " 新游戏创建已取消。", at=event.user_id, reply=message_id)
+                await self.api.set_msg_emoji_like(message_id_str, _normalize_emoji_id(EMOJI["CONFIRM"]), set=False)
+                await self.api.set_msg_emoji_like(message_id_str, _normalize_emoji_id(EMOJI["COFFEE"]))
+                await self.api.post_group_msg(group_id, " 新游戏创建已取消。", at=event.user_id, reply=message_id_str)
                 LOG.info(f"用户 {event.user_id} 取消了新游戏创建请求。")
             except Exception as e:
                 LOG.error(f"处理取消新游戏时出错: {e}")
             finally:
-                del self.pending_new_games[message_id]
+                del self.pending_new_games[message_id_str]
                 await self._save_cache_to_disk()
 
-        elif event.emoji_like_id == str(EMOJI["CONFIRM"]):  # 确认
+        elif emoji_id == _normalize_emoji_id(EMOJI["CONFIRM"]):  # 确认
             if self.db and await self.db.is_game_running(group_id):
-                await self.api.post_group_msg(group_id, " 当前已有正在进行的游戏，无法创建新游戏。", at=event.user_id, reply=message_id)
-                await self.api.set_msg_emoji_like(message_id, str(EMOJI["COFFEE"]))
-                await self.api.set_msg_emoji_like(message_id, str(EMOJI["CONFIRM"]), set=False)
+                await self.api.post_group_msg(group_id, " 当前已有正在进行的游戏，无法创建新游戏。", at=event.user_id, reply=message_id_str)
+                await self.api.set_msg_emoji_like(message_id_str, _normalize_emoji_id(EMOJI["COFFEE"]))
+                await self.api.set_msg_emoji_like(message_id_str, _normalize_emoji_id(EMOJI["CONFIRM"]), set=False)
                 return
             
-            await self.api.set_msg_emoji_like(message_id, str(EMOJI["CONFIRM"]))
-            await self.api.set_msg_emoji_like(message_id, str(EMOJI["COFFEE"]), set=False)
-            del self.pending_new_games[message_id]
+            await self.api.set_msg_emoji_like(message_id_str, _normalize_emoji_id(EMOJI["CONFIRM"]))
+            await self.api.set_msg_emoji_like(message_id_str, _normalize_emoji_id(EMOJI["COFFEE"]), set=False)
+            del self.pending_new_games[message_id_str]
             await self._save_cache_to_disk()
             
             await self.start_new_game(
@@ -510,15 +527,19 @@ class AITRPGPlugin(NcatBotPlugin):
         group_id = str(event.group_id)
         user_id = str(event.user_id)
         message_id = str(event.message_id)
-        emoji_id = int(event.emoji_like_id)
+        emoji_id = _normalize_emoji_id(event.emoji_like_id)
 
-        async with self.db.conn.cursor() as cursor:
-            await cursor.execute("SELECT game_id, main_message_id, candidate_custom_input_ids FROM games WHERE channel_id = ?", (group_id,))
-            game = await cursor.fetchone()
-            if not game:
-                return
-            game_id, main_message_id, candidate_ids_json = game
-            candidate_ids: list = json.loads(candidate_ids_json)
+        if not self.db: return
+        game = await self.db.get_game_by_channel_id(group_id)
+        if not game:
+            return
+        
+        if game["is_frozen"]:
+            LOG.info(f"游戏 {game['game_id']} 已冻结，忽略表情回应。")
+            return
+
+        game_id, main_message_id, candidate_ids_json = game["game_id"], game["main_message_id"], game["candidate_custom_input_ids"]
+        candidate_ids: list = json.loads(candidate_ids_json)
 
         # --- 主动防御：只缓存有效投票 ---
         if message_id != str(main_message_id) and message_id not in candidate_ids:
@@ -526,10 +547,17 @@ class AITRPGPlugin(NcatBotPlugin):
 
         # 更新投票缓存
         group_vote_cache = self.vote_cache.setdefault(group_id, {})
+        message_votes = group_vote_cache.setdefault(message_id, {"votes": {}})
+        
+        # 确保 'votes' 键存在
+        if "votes" not in message_votes:
+            message_votes["votes"] = {}
+
+        vote_set = message_votes["votes"].setdefault(emoji_id, set())
         if event.is_add:
-            group_vote_cache.setdefault(message_id, {}).setdefault(emoji_id, set()).add(user_id)
-        elif message_id in group_vote_cache and emoji_id in group_vote_cache[message_id]:
-            group_vote_cache[message_id][emoji_id].discard(user_id)
+            vote_set.add(user_id)
+        else:
+            vote_set.discard(user_id)
         await self._save_cache_to_disk()
 
 
@@ -538,22 +566,22 @@ class AITRPGPlugin(NcatBotPlugin):
         # 处理管理员/主持人往main_message_id上贴表情的行为
         if message_id == str(main_message_id) and is_admin_or_host:
             # 判断三种操作
-            if emoji_id == EMOJI["CONFIRM"]:
+            if emoji_id == _normalize_emoji_id(EMOJI["CONFIRM"]):
                 await self._tally_and_advance(int(game_id))
                 return
-            elif emoji_id == EMOJI["DENY"]:
+            elif emoji_id == _normalize_emoji_id(EMOJI["DENY"]):
                 _, result_lines = await self._tally_votes(group_id, str(main_message_id), candidate_ids_json)
                 await self.api.post_group_msg(group_id, text="\n".join(result_lines) + f"\n由于一位管理员/主持人的反对票，本轮投票并未获通过，将重新开始本輪。", reply=message_id)
                 self.vote_cache[group_id] = {} # 清理本轮投票缓存
                 await self._save_cache_to_disk()
                 await self.checkout_head(int(game_id))
                 return
-            elif emoji_id == EMOJI["RETRACT"]:
+            elif emoji_id == _normalize_emoji_id(EMOJI["RETRACT"]):
                 await self._revert_last_round(int(game_id))
                 return
 
         # 处理管理员/主持人撤回自定义输入的行为
-        if message_id in candidate_ids and is_admin_or_host and emoji_id == EMOJI["CANCEL"]:
+        if message_id in candidate_ids and is_admin_or_host and emoji_id == _normalize_emoji_id(EMOJI["CANCEL"]):
             candidate_ids.remove(message_id)
             async with self.db.conn.cursor() as cursor:
                 await cursor.execute("UPDATE games SET candidate_custom_input_ids = ? WHERE channel_id = ?", (json.dumps(candidate_ids), group_id))
@@ -577,30 +605,28 @@ class AITRPGPlugin(NcatBotPlugin):
             EMOJI["A"]: 'A', EMOJI["B"]: 'B', EMOJI["C"]: 'C', EMOJI["D"]: 'D',
             EMOJI["E"]: 'E', EMOJI["F"]: 'F', EMOJI["G"]: 'G'
         }
-        main_votes = group_vote_cache.get(main_message_id, {})
+        main_votes_cache = group_vote_cache.get(main_message_id, {}).get("votes", {})
         for emoji, option in option_emojis.items():
-            count = len(main_votes.get(emoji, set()))
+            count = len(main_votes_cache.get(_normalize_emoji_id(emoji), set()))
             if count > 0:
                 scores[option] = count
                 result_lines.append(f"- 选项 {option}: {count} 票")
 
         candidate_ids = json.loads(candidate_ids_json)
         for cid in candidate_ids:
-            input_votes = group_vote_cache.get(cid, {})
-            yay = len(input_votes.get(EMOJI["YAY"], set()))
-            nay = len(input_votes.get(EMOJI["NAY"], set()))
+            item_cache = group_vote_cache.get(cid, {})
+            input_votes = item_cache.get("votes", {})
+            yay = len(input_votes.get(_normalize_emoji_id(EMOJI["YAY"]), set()))
+            nay = len(input_votes.get(_normalize_emoji_id(EMOJI["NAY"]), set()))
             net_score = yay - nay
             scores[cid] = net_score
 
-            content = ""
-            message_cache = group_vote_cache.get(cid, {})
-            if "content" in message_cache:
-                content = message_cache["content"]
-            else:
+            content = item_cache.get("content", "")
+            if not content:
                 try:
                     msg_event = await self.api.get_msg(cid)
                     content = "".join(s.text for s in msg_event.message.filter_text())
-                    message_cache["content"] = content
+                    item_cache["content"] = content
                     await self._save_cache_to_disk()
                 except Exception as e:
                     LOG.warning(f"获取消息 {cid} 内容失败: {e}")
@@ -634,26 +660,29 @@ class AITRPGPlugin(NcatBotPlugin):
     async def _tally_and_advance(self, game_id: int):
         """计票并推进游戏到下一回合"""
         if not self.db or not self.db.conn or not self.llm_api: return
+        
+        try:
+            await self.db.set_game_frozen_status(game_id, True)
 
-        # 在事务外先获取基本信息和初始版本号
-        async with self.db.conn.cursor() as cursor:
-            await cursor.execute("SELECT channel_id, main_message_id, candidate_custom_input_ids, system_prompt, head_branch_id FROM games WHERE game_id = ?", (game_id,))
-            game_data = await cursor.fetchone()
-            if not game_data: return
-            channel_id, main_message_id, candidate_ids_json, system_prompt, head_branch_id = game_data
+            # 在事务外先获取基本信息和初始版本号
+            async with self.db.conn.cursor() as cursor:
+                await cursor.execute("SELECT channel_id, main_message_id, candidate_custom_input_ids, system_prompt, head_branch_id FROM games WHERE game_id = ?", (game_id,))
+                game_data = await cursor.fetchone()
+                if not game_data: return
+                channel_id, main_message_id, candidate_ids_json, system_prompt, head_branch_id = game_data
 
-            await cursor.execute("SELECT tip_round_id FROM branches WHERE branch_id = ?", (head_branch_id,))
-            tip_now_data = await cursor.fetchone()
-            if not tip_now_data: return
-            initial_tip_round_id = tip_now_data[0]
+                await cursor.execute("SELECT tip_round_id FROM branches WHERE branch_id = ?", (head_branch_id,))
+                tip_now_data = await cursor.fetchone()
+                if not tip_now_data: return
+                initial_tip_round_id = tip_now_data[0]
 
-        # 1. 计票 (网络IO)
-        scores, result_lines = await self._tally_votes(channel_id, str(main_message_id), candidate_ids_json)
-        await self.api.post_group_msg(channel_id, text="\n".join(result_lines), reply=main_message_id)
+            # 1. 计票 (网络IO)
+            scores, result_lines = await self._tally_votes(channel_id, str(main_message_id), candidate_ids_json)
+            await self.api.post_group_msg(channel_id, text="\n".join(result_lines), reply=main_message_id)
 
-        if not scores:
-            await self.api.post_group_msg(channel_id, text="无人投票，本轮无效。")
-            return
+            if not scores:
+                await self.api.post_group_msg(channel_id, text="无人投票，本轮无效。")
+                return
 
         # 2. 找出胜利者并获取内容 (可能涉及网络IO)
         max_score = max(scores.values())
@@ -664,13 +693,14 @@ class AITRPGPlugin(NcatBotPlugin):
             if x in 'ABCDEFG':
                 winner_lines.append(f"选择选项 {x}")
             else:
-                content = group_vote_cache.get(x, {}).get("content")
+                item_cache = group_vote_cache.get(x, {})
+                content = item_cache.get("content")
                 if not content:
                     try:
                         msg = await self.api.get_msg(x)
                         content = "".join(s.text for s in msg.message.filter_text())
                         # 回填缓存
-                        group_vote_cache.setdefault(x, {})["content"] = content
+                        item_cache["content"] = content
                         await self._save_cache_to_disk()
                     except Exception as e:
                         LOG.warning(f"获取胜利者消息 {x} 内容失败: {e}")
@@ -716,6 +746,9 @@ class AITRPGPlugin(NcatBotPlugin):
 
         # 6. 进入下一轮
         await self.checkout_head(game_id)
+        finally:
+            if self.db:
+                await self.db.set_game_frozen_status(game_id, False)
 
     async def _revert_last_round(self, game_id: int):
         """将游戏回退到上一轮"""

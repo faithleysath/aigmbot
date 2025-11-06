@@ -44,6 +44,7 @@ class Database:
                     head_branch_id INTEGER,
                     system_prompt TEXT,
                     host_user_id TEXT,
+                    is_frozen BOOLEAN NOT NULL DEFAULT 0,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (head_branch_id) REFERENCES branches (branch_id) ON DELETE SET NULL
@@ -118,3 +119,18 @@ class Database:
             await cursor.execute("SELECT 1 FROM games WHERE channel_id = ?", (channel_id,))
             result = await cursor.fetchone()
             return result is not None
+
+    async def get_game_by_channel_id(self, channel_id: str):
+        """通过 channel_id 获取游戏信息"""
+        if not self.conn: return None
+        async with self.conn.cursor() as cursor:
+            cursor.row_factory = aiosqlite.Row
+            await cursor.execute("SELECT * FROM games WHERE channel_id = ?", (channel_id,))
+            return await cursor.fetchone()
+
+    async def set_game_frozen_status(self, game_id: int, is_frozen: bool):
+        """设置游戏的冻结状态"""
+        if not self.conn: return
+        async with self.conn.cursor() as cursor:
+            await cursor.execute("UPDATE games SET is_frozen = ? WHERE game_id = ?", (is_frozen, game_id))
+            await self.conn.commit()
