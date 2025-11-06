@@ -1,10 +1,7 @@
 # src/plugins/ai_trpg/game_manager.py
 from typing import cast
-import aiosqlite
-
 from ncatbot.utils import get_log
 from ncatbot.plugin_system import NcatBotPlugin
-
 from .db import Database
 from .llm_api import LLM_API, ChatCompletionMessageParam
 from .renderer import MarkdownRenderer
