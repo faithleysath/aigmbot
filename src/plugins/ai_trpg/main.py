@@ -73,6 +73,8 @@ class AITRPGPlugin(NcatBotPlugin):
         """插件关闭时执行的操作"""
         if self.db:
             await self.db.close()
+        if self.renderer:
+            await self.renderer.close()
         LOG.info(f"[{self.name}] 已卸载。")
 
     # --- 核心游戏逻辑 (待实现) ---

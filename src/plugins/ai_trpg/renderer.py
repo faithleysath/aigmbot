@@ -6,7 +6,25 @@ LOG = get_log(__name__)
 
 class MarkdownRenderer:
     def __init__(self):
-        self.md = MarkdownIt()
+        self.md = MarkdownIt("commonmark").disable("html_block").disable("html_inline")
+        self._p = None
+        self._browser = None
+
+    async def _ensure_browser(self):
+        if self._browser:
+            return self._browser
+        self._p = await async_playwright().start()
+        self._browser = await self._p.chromium.launch()
+        return self._browser
+
+    async def close(self):
+        try:
+            if self._browser:
+                await self._browser.close()
+            if self._p:
+                await self._p.stop()
+        except Exception as e:
+            LOG.warning(f"关闭渲染器失败: {e}")
 
     async def render(self, markdown_text: str) -> bytes | None:
         """
@@ -63,20 +81,14 @@ class MarkdownRenderer:
             </html>
             """
 
-            async with async_playwright() as p:
-                browser = await p.chromium.launch()
-                page = await browser.new_page()
-                await page.set_content(html_with_style)
-                
-                # 截图 body 元素以获得准确的内容尺寸
-                element = await page.query_selector('body')
-                if element:
-                    image_bytes = await element.screenshot()
-                else:
-                    # 如果找不到 body，则截图整个页面作为备用
-                    image_bytes = await page.screenshot(full_page=True)
-                    
-                await browser.close()
+            browser = await self._ensure_browser()
+            page = await browser.new_page()
+            await page.set_content(html_with_style)
+            
+            # 截图 body 元素以获得准确的内容尺寸
+            element = await page.query_selector('body')
+            image_bytes = await (element.screenshot() if element else page.screenshot(full_page=True))
+            await page.close()
 
             LOG.info("Markdown 成功渲染为图片二进制数据。")
             return image_bytes
