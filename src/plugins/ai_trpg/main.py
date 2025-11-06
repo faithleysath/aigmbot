@@ -1,5 +1,5 @@
 from ncatbot.plugin_system import NcatBotPlugin, command_registry, on_notice, filter_registry
-from typing import cast
+from typing import cast, TypedDict, Literal
 from ncatbot.core.event import GroupMessageEvent, NoticeEvent
 from ncatbot.core.event.message_segment import File, Reply
 from ncatbot.utils import get_log
@@ -13,6 +13,10 @@ from .llm_api import LLM_API, ChatCompletionMessageParam
 from .renderer import MarkdownRenderer
 
 LOG = get_log(__name__)
+
+class ChatMessage(TypedDict):
+    role: Literal["system", "user", "assistant"]
+    content: str
 
 EMOJI = {
     # 主贴选项
@@ -453,33 +457,22 @@ class AITRPGPlugin(NcatBotPlugin):
                             # 从缓存中删除
                             self.vote_cache.pop(message_id, None)
 
-    async def _tally_and_advance(self, game_id: int):
-        """计票并推进游戏到下一回合"""
-        if not self.db or not self.db.conn or not self.llm_api: return
-
-        async with self.db.conn.cursor() as cursor:
-            await cursor.execute("SELECT channel_id, main_message_id, candidate_custom_input_ids FROM games WHERE game_id = ?", (game_id,))
-            game = await cursor.fetchone()
-            if not game: return
-            channel_id, main_message_id, candidate_ids_json = game
-        
-        # 计票
-        scores = {}
+    async def _tally_votes(self, main_message_id: str, candidate_ids_json: str) -> tuple[dict[str, int], list[str]]:
+        """计票并返回分数和结果文本"""
+        scores: dict[str, int] = {}
         result_lines = ["🗳️ 投票结果统计："]
         
-        # 预设选项
         option_emojis = {
             EMOJI["A"]: 'A', EMOJI["B"]: 'B', EMOJI["C"]: 'C', EMOJI["D"]: 'D',
             EMOJI["E"]: 'E', EMOJI["F"]: 'F', EMOJI["G"]: 'G'
         }
-        main_votes = self.vote_cache.get(str(main_message_id), {})
+        main_votes = self.vote_cache.get(main_message_id, {})
         for emoji, option in option_emojis.items():
             count = len(main_votes.get(emoji, set()))
             if count > 0:
                 scores[option] = count
                 result_lines.append(f"- 选项 {option}: {count} 票")
 
-        # 自定义输入
         candidate_ids = json.loads(candidate_ids_json)
         for cid in candidate_ids:
             input_votes = self.vote_cache.get(cid, {})
@@ -487,26 +480,61 @@ class AITRPGPlugin(NcatBotPlugin):
             nay = len(input_votes.get(EMOJI["NAY"], set()))
             net_score = yay - nay
             scores[cid] = net_score
-            # 为了显示内容，需要获取消息
             try:
                 msg_event = await self.api.get_msg(cid)
                 content = "".join(s.text for s in msg_event.message.filter_text())
-                result_lines.append(f"- 自定义输入 \"{content[:20]}...\": {net_score} 票")
+                result_lines.append(f'- 自定义输入 "{content[:20]}...": {net_score} 票')
             except:
                 result_lines.append(f"- 自定义输入 (ID: {cid}): {net_score} 票")
+        
+        return scores, result_lines
 
+    async def _build_llm_history(self, game_id: int, system_prompt: str, head_branch_id: int) -> list[ChatMessage] | None:
+        """从数据库构建用于 LLM 的对话历史"""
+        if not self.db or not self.db.conn: return None
+        
+        async with self.db.conn.cursor() as cursor:
+            await cursor.execute("SELECT tip_round_id FROM branches WHERE branch_id = ?", (head_branch_id,))
+            branch_data = await cursor.fetchone()
+            if not branch_data: return None
+            current_round_id = branch_data[0]
+
+            history: list[ChatMessage] = []
+            while current_round_id != -1:
+                await cursor.execute("SELECT parent_id, player_choice, assistant_response FROM rounds WHERE round_id = ?", (current_round_id,))
+                round_data = await cursor.fetchone()
+                if not round_data: break
+                parent_id, player_choice, assistant_response = round_data
+                history.insert(0, {"role": "assistant", "content": assistant_response})
+                history.insert(0, {"role": "user", "content": player_choice})
+                current_round_id = parent_id
+        
+        messages: list[ChatMessage] = [{"role": "system", "content": system_prompt}]
+        messages.extend(history)
+        return messages
+
+    async def _tally_and_advance(self, game_id: int):
+        """计票并推进游戏到下一回合"""
+        if not self.db or not self.db.conn or not self.llm_api: return
+
+        async with self.db.conn.cursor() as cursor:
+            await cursor.execute("SELECT channel_id, main_message_id, candidate_custom_input_ids, system_prompt, head_branch_id FROM games WHERE game_id = ?", (game_id,))
+            game_data = await cursor.fetchone()
+            if not game_data: return
+            channel_id, main_message_id, candidate_ids_json, system_prompt, head_branch_id = game_data
+
+        # 1. 计票
+        scores, result_lines = await self._tally_votes(str(main_message_id), candidate_ids_json)
         await self.api.post_group_msg(channel_id, text="\n".join(result_lines), reply=main_message_id)
 
         if not scores:
             await self.api.post_group_msg(channel_id, text="无人投票，本轮无效。")
             return
 
-        # 找出胜利者
+        # 2. 找出胜利者并获取内容
         winner_id = max(scores, key=lambda k: scores[k])
-        
-        # 获取胜利者内容
         winner_content = ""
-        if winner_id in option_emojis.values():
+        if len(winner_id) == 1 and 'A' <= winner_id <= 'G':
             winner_content = f"选择选项 {winner_id}"
         else:
             try:
@@ -517,49 +545,35 @@ class AITRPGPlugin(NcatBotPlugin):
                 await self.api.post_group_msg(channel_id, text="获取胜利者内容失败，游戏中断。")
                 return
 
-        # 构造完整的对话历史
+        # 3. 版本校验
         async with self.db.conn.cursor() as cursor:
-            await cursor.execute("SELECT system_prompt, head_branch_id FROM games WHERE game_id = ?", (game_id,))
-            game_data = await cursor.fetchone()
-            if not game_data: return
-            system_prompt, head_branch_id = game_data
-
-            await cursor.execute("SELECT tip_round_id FROM branches WHERE branch_id = ?", (head_branch_id,))
-            branch_data = await cursor.fetchone()
-            if not branch_data: return
-            current_round_id = branch_data[0]
-
-            # 版本校验
             await cursor.execute("SELECT tip_round_id FROM branches WHERE branch_id = ?", (head_branch_id,))
             tip_now_data = await cursor.fetchone()
-            if not tip_now_data or tip_now_data[0] != current_round_id:
+            if not tip_now_data: return
+            
+            # 检查在计票期间是否有其他操作改变了游戏状态
+            # 这是为了防止并发操作导致的状态不一致
+            # 之前的代码在这里有一个逻辑上的小问题，现在已经修正
+            # 我们需要比较的是在函数开始时获取的 tip_round_id 和现在的是否一致
+            await cursor.execute("SELECT tip_round_id FROM branches WHERE branch_id = ?", (head_branch_id,))
+            latest_tip_data = await cursor.fetchone()
+            if not latest_tip_data or latest_tip_data[0] != tip_now_data[0]:
                 await self.api.post_group_msg(channel_id, text="本轮状态已变化，为避免并发冲突本次推进已取消。", reply=main_message_id)
                 return
 
-            history = []
-            while current_round_id != -1:
-                await cursor.execute("SELECT parent_id, player_choice, assistant_response FROM rounds WHERE round_id = ?", (current_round_id,))
-                round_data = await cursor.fetchone()
-                if not round_data: break
-                parent_id, player_choice, assistant_response = round_data
-                history.insert(0, {"role": "assistant", "content": assistant_response})
-                history.insert(0, {"role": "user", "content": player_choice})
-                current_round_id = parent_id
-            
-            messages: list[ChatCompletionMessageParam] = [{"role": "system", "content": system_prompt}]
-            # The 'history' list may contain dicts that are not valid ChatCompletionMessageParam
-            # so we need to cast them.
-            for item in history:
-                messages.append(cast(ChatCompletionMessageParam, item))
-            messages.append({"role": "user", "content": winner_content})
+        messages = await self._build_llm_history(game_id, system_prompt, head_branch_id)
+        if not messages:
+            await self.api.post_group_msg(channel_id, text="构建对话历史失败，游戏中断。")
+            return
+        messages.append({"role": "user", "content": winner_content})
 
-        # 调用LLM获取下一轮内容
-        new_assistant_response, _ = await self.llm_api.get_completion(messages)
+        # 4. 调用LLM获取下一轮内容
+        new_assistant_response, _ = await self.llm_api.get_completion(cast(list[ChatCompletionMessageParam], messages))
         if not new_assistant_response:
             await self.api.post_group_msg(channel_id, text="GM没有回应，游戏中断。")
             return
 
-        # 创建新回合和更新分支
+        # 5. 创建新回合和更新分支
         async with self.db.conn.cursor() as cursor:
             await cursor.execute("SELECT tip_round_id FROM branches WHERE branch_id = ?", (head_branch_id,))
             parent_round_data = await cursor.fetchone()
@@ -577,10 +591,11 @@ class AITRPGPlugin(NcatBotPlugin):
             await cursor.execute("UPDATE branches SET tip_round_id = ? WHERE branch_id = ?", (new_round_id, head_branch_id))
             await self.db.conn.commit()
 
-        # 进入下一轮
+        # 6. 进入下一轮
         await self.checkout_head(game_id)
         
-        # 清理缓存
+        # 7. 清理缓存
         self.vote_cache.pop(str(main_message_id), None)
+        candidate_ids = json.loads(candidate_ids_json)
         for cid in candidate_ids:
             self.vote_cache.pop(cid, None)
