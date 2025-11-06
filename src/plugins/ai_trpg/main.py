@@ -170,12 +170,16 @@ class AITRPGPlugin(NcatBotPlugin):
 
             if not game_row:
                 return # 不是对当前游戏主消息的回复
+            
+            # 检查event消息中是否有at段，如果没有，则终止
+            if not f"[CQ:at,qq={event.self_id}]" in event.raw_message:
+                return
 
             game_id, candidate_ids_json = game_row
             
             custom_input_message_id = str(event.message_id)
             
-            candidate_ids = json.loads(candidate_ids_json)
+            candidate_ids: list = json.loads(candidate_ids_json)
             candidate_ids.append(custom_input_message_id)
 
             await cursor.execute(
@@ -187,7 +191,7 @@ class AITRPGPlugin(NcatBotPlugin):
             LOG.info(f"游戏 {game_id} 收到新的自定义输入: {custom_input_message_id}")
 
             # 为自定义输入添加投票表情
-            for emoji_key in ["YAY", "NAY", "DENY"]:
+            for emoji_key in ["YAY", "NAY", "CANCEL"]:
                 try:
                     await self.api.set_msg_emoji_like(custom_input_message_id, EMOJI[emoji_key])
                 except Exception as e:
