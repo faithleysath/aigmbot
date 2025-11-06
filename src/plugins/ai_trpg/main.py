@@ -76,11 +76,14 @@ class AITRPGPlugin(NcatBotPlugin):
     async def listen_file_message(self, event: GroupMessageEvent):
         """监听群文件消息，检查是否是.txt或.md文件"""
         files = event.message.filter(File)
+        LOG.debug(f"收到文件消息，文件列表: {files}")
         if not files:
+            LOG.debug("没有找到文件，忽略该消息。")
             return
         # 取第一个文件
         file = files[0]
         if not file.file.endswith((".txt", ".md")):
+            LOG.debug(f"文件类型不支持: {file.file}，忽略该文件。")
             return
         try:
             async with aiohttp.ClientSession() as session:
@@ -88,14 +91,19 @@ class AITRPGPlugin(NcatBotPlugin):
                     if response.status == 200:
                         content = await response.text()
                         preview = content[:500]
+                        LOG.debug(f"文件预览内容:\n{preview}")
                         # 交给markdown渲染器处理，或直接输出预览
                         if self.renderer:
+                            LOG.debug("使用Markdown渲染器生成预览图片。")
                             img: bytes | None = await self.renderer.render(preview)
                             if img:
+                                LOG.debug("图片渲染成功，发送图片预览。")
                                 await event.reply(image=f"data:image/png;base64,{bytes_to_base64(img)}")
                             else:
+                                LOG.debug("图片渲染失败，发送文本预览。")
                                 await event.reply(f"文件预览:\n\n{preview}")
                         else:
+                            LOG.debug("没有Markdown渲染器，发送文本预览。")
                             await event.reply(f"文件预览:\n\n{preview}")
                     else:
                         LOG.warning(f"下载文件预览失败，状态码: {response.status}")
