@@ -120,9 +120,6 @@ class Database:
 
             # 创建索引
             await cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_games_channel ON games(channel_id);"
-            )
-            await cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_games_main_msg ON games(main_message_id);"
             )
             await cursor.execute(
@@ -219,7 +216,7 @@ class Database:
                 "SELECT host_user_id FROM games WHERE channel_id = ?", (channel_id,)
             )
             result = await cursor.fetchone()
-            return result[0] if result else None
+            return result["host_user_id"] if result else None
 
     async def create_game(
         self, channel_id: str, user_id: str, system_prompt: str
