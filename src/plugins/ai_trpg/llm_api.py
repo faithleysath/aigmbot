@@ -30,7 +30,7 @@ class LLM_API:
         self.client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
-            timeout=30.0,
+            timeout=60.0,
         )
         self.model_name = model_name
 
@@ -43,7 +43,7 @@ class LLM_API:
         :param messages: 对话历史列表，格式为 [{"role": "user", "content": "..."}, ...]
         :return: 一个元组，包含 (AI 返回的内容字符串, usage 字典)，如果出错则返回 (None, None)
         """
-        max_retries = 4
+        max_retries = 2
         base_delay = 1.0  # seconds
 
         for attempt in range(max_retries):
