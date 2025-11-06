@@ -151,7 +151,7 @@ class AITRPGPlugin(NcatBotPlugin):
                 await self.api.delete_msg(pending_game["message_id"])
                 await self.api.set_msg_emoji_like(event.message_id, "127881", set=False)
                 await self.api.set_msg_emoji_like(event.message_id, "9749")
-                await self.api.post_group_msg(event.group_id, "新游戏创建已取消。", at=event.user_id, reply=event.message_id)
+                await self.api.post_group_msg(event.group_id, " 新游戏创建已取消。", at=event.user_id, reply=event.message_id)
                 LOG.info(f"用户 {event.user_id} 取消了新游戏创建请求。删除消息 {pending_game['message_id']}")
             except Exception as e:
                 LOG.error(f"删除消息失败: {e}")
@@ -161,6 +161,6 @@ class AITRPGPlugin(NcatBotPlugin):
             # 游戏开始
             await self.api.set_msg_emoji_like(event.message_id, "127881")
             await self.api.set_msg_emoji_like(event.message_id, "9749", set=False)
-            await self.api.post_group_msg(event.group_id, "新的 AI TRPG 游戏已创建！请稍候，正在初始化游戏环境...", at=event.user_id, reply=event.message_id)
+            await self.api.post_group_msg(event.group_id, " 新的 AI TRPG 游戏已创建！请稍候，正在初始化游戏环境...", at=event.user_id, reply=event.message_id)
             LOG.info(f"用户 {event.user_id} 确认创建新游戏。初始化游戏环境中...")
             # TODO
