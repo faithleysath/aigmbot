@@ -89,12 +89,13 @@ class EventHandler:
                 )  # 确认
 
             key = str(reply_message_id)
-            self.cache_manager.pending_new_games[key] = {
-                "user_id": event.user_id,
-                "system_prompt": content,
-                "message_id": event.message_id,
-                "create_time": datetime.now(timezone.utc),
-            }
+            async with self.cache_manager._cache_lock:
+                self.cache_manager.pending_new_games[key] = {
+                    "user_id": event.user_id,
+                    "system_prompt": content,
+                    "message_id": event.message_id,
+                    "create_time": datetime.now(timezone.utc),
+                }
             await self.cache_manager.save_to_disk()
         except Exception as e:
             LOG.error(f"处理文件消息时出错: {e}", exc_info=True)
@@ -134,11 +135,12 @@ class EventHandler:
         )
 
         # 将内容添加到缓存
-        group_vote_cache = self.cache_manager.vote_cache.setdefault(group_id, {})
-        group_vote_cache[custom_input_message_id] = {
-            "content": custom_input_content,
-            "votes": {},
-        }
+        async with self.cache_manager._cache_lock:
+            group_vote_cache = self.cache_manager.vote_cache.setdefault(group_id, {})
+            group_vote_cache[custom_input_message_id] = {
+                "content": custom_input_content,
+                "votes": {},
+            }
         await self.cache_manager.save_to_disk()
 
         LOG.info(f"游戏 {game_id} 收到新的自定义输入: {custom_input_message_id}")
@@ -283,7 +285,8 @@ class EventHandler:
                 reply=main_message_id,
             )
             if self.cache_manager:
-                self.cache_manager.vote_cache[group_id] = {}  # 清理本轮投票缓存
+                async with self.cache_manager._cache_lock:
+                    self.cache_manager.vote_cache[group_id] = {}  # 清理本轮投票缓存
                 await self.cache_manager.save_to_disk()
             if self.game_manager:
                 await self.game_manager.checkout_head(game_id)
@@ -313,7 +316,8 @@ class EventHandler:
         )
         # 从缓存中删除
         if self.cache_manager and group_id in self.cache_manager.vote_cache:
-            self.cache_manager.vote_cache[group_id].pop(message_id, None)
+            async with self.cache_manager._cache_lock:
+                self.cache_manager.vote_cache[group_id].pop(message_id, None)
             await self.cache_manager.save_to_disk()
 
     async def _handle_game_reaction(self, event: NoticeEvent):
@@ -345,15 +349,16 @@ class EventHandler:
 
         # 更新投票缓存
         if self.cache_manager:
-            group_vote_cache = self.cache_manager.vote_cache.setdefault(group_id, {})
-            message_votes = group_vote_cache.setdefault(message_id, {"votes": {}})
-            if "votes" not in message_votes:
-                message_votes["votes"] = {}
-            vote_set = message_votes["votes"].setdefault(emoji_id, set())
-            if event.is_add:
-                vote_set.add(user_id)
-            else:
-                vote_set.discard(user_id)
+            async with self.cache_manager._cache_lock:
+                group_vote_cache = self.cache_manager.vote_cache.setdefault(group_id, {})
+                message_votes = group_vote_cache.setdefault(message_id, {"votes": {}})
+                if "votes" not in message_votes:
+                    message_votes["votes"] = {}
+                vote_set = message_votes["votes"].setdefault(emoji_id, set())
+                if event.is_add:
+                    vote_set.add(user_id)
+                else:
+                    vote_set.discard(user_id)
             await self.cache_manager.save_to_disk()
 
         # 检查是否是管理员或主持人

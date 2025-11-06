@@ -20,7 +20,7 @@ class Database:
             await self.conn.execute("PRAGMA journal_mode=WAL;")
             await self.conn.execute("PRAGMA synchronous=NORMAL;")
             await self.conn.execute("PRAGMA foreign_keys = ON;")
-            await self.conn.execute("PRAGMA busy_timeout=3000;")  # 3s
+            await self.conn.execute("PRAGMA busy_timeout=5000;")  # 5s
             await self.conn.execute("PRAGMA wal_autocheckpoint=2000;")
             await self.init_db()
             LOG.info(f"成功连接并初始化数据库: {self.db_path}")
@@ -294,11 +294,14 @@ class Database:
             await cursor.execute(
                 """SELECT g.channel_id, b.tip_round_id
                    FROM games g
-                   JOIN branches b ON g.head_branch_id = b.branch_id
+                   LEFT JOIN branches b ON g.head_branch_id = b.branch_id
                    WHERE g.game_id = ?""",
                 (game_id,),
             )
-            return await cursor.fetchone()
+            row = await cursor.fetchone()
+            if not row or row["tip_round_id"] is None:
+                raise RuntimeError("游戏 head 分支未设置或已损坏")
+            return row
 
     async def get_round_info(self, round_id: int):
         """获取回合信息"""

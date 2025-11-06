@@ -286,7 +286,8 @@ class GameManager:
                     )
 
             # 6. 清理并进入下一轮
-            self.cache_manager.vote_cache[channel_id] = {}
+            async with self.cache_manager._cache_lock:
+                self.cache_manager.vote_cache[channel_id] = {}
             await self.cache_manager.save_to_disk()
             await self.checkout_head(game_id)
 
@@ -345,6 +346,11 @@ class GameManager:
             await self.api.post_group_msg(
                 str(channel_id), text="🔄 游戏已成功回退到上一轮。"
             )
+
+            if self.cache_manager:
+                async with self.cache_manager._cache_lock:
+                    self.cache_manager.vote_cache[str(channel_id)] = {}
+                await self.cache_manager.save_to_disk()
 
             # 5. 刷新游戏界面
             await self.checkout_head(game_id)

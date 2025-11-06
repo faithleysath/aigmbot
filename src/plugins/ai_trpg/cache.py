@@ -6,7 +6,6 @@ import aiofiles
 import aiofiles.os as aio_os
 from typing import TypedDict, NotRequired
 import asyncio
-import time
 
 from ncatbot.utils import get_log
 
@@ -24,6 +23,7 @@ class CacheManager:
         self.pending_new_games: dict[str, dict] = {}
         self.vote_cache: dict[str, dict[str, VoteCacheItem]] = {}
         self._io_lock = asyncio.Lock()
+        self._cache_lock = asyncio.Lock()  # 新增：保护内存缓存的并发更新
         self._last_save_ts = 0.0
 
     async def load_from_disk(self):

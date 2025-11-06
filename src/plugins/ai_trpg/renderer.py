@@ -20,7 +20,10 @@ class MarkdownRenderer:
             if self._browser:
                 return self._browser
             self._p = await async_playwright().start()
-            self._browser = await self._p.chromium.launch()
+            try:
+                self._browser = await self._p.chromium.launch()
+            except Exception:
+                self._browser = await self._p.chromium.launch(args=["--no-sandbox"])
         return self._browser
 
     async def close(self):
@@ -91,7 +94,8 @@ class MarkdownRenderer:
             page = await browser.new_page()
             try:
                 await page.set_viewport_size({"width": 1000, "height": 100})
-                await page.set_content(html_with_style)
+                await page.set_content(html_with_style, wait_until="networkidle")
+                await page.wait_for_timeout(50)
 
                 # 截图 body 元素以获得准确的内容尺寸
                 element = await page.query_selector("body")
