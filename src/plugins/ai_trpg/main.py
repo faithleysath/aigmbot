@@ -165,7 +165,7 @@ class AITRPGPlugin(NcatBotPlugin):
             LOG.info(f"游戏 {game_id} 收到新的自定义输入: {custom_input_message_id}")
 
             # 为自定义输入添加投票表情
-            for emoji in [128077, 128078, 128465]: # 👍, 👎, 🗑️
+            for emoji in [127881, 128560, 10060]: # 🎉, 😰, ❌ (沿用旧版表情)
                 try:
                     await self.api.set_msg_emoji_like(custom_input_message_id, emoji)
                 except Exception as e:
@@ -371,6 +371,7 @@ class AITRPGPlugin(NcatBotPlugin):
             # 5. 添加表情回应
             emoji_map = {
                 'A': 127822, 'B': 9973, 'C': 128663, 'D': 128054,
+                'E': 127859, 'F': 128293, 'G': 128123,
                 'Confirm': 127881, 'Deny': 10060
             }
             for _, emoji_id in emoji_map.items():
@@ -423,7 +424,7 @@ class AITRPGPlugin(NcatBotPlugin):
                         return
 
         # 检查是否是撤回自定义输入
-        if emoji_id == 128465: # 🗑️
+        if emoji_id == 10060: # ❌ (沿用旧版表情作为撤回)
             async with self.db.conn.cursor() as cursor:
                 await cursor.execute("SELECT game_id, candidate_custom_input_ids FROM games WHERE channel_id = ?", (group_id,))
                 game = await cursor.fetchone()
@@ -456,7 +457,10 @@ class AITRPGPlugin(NcatBotPlugin):
         result_lines = ["🗳️ 投票结果统计："]
         
         # 预设选项
-        option_emojis = {127822: 'A', 9973: 'B', 128663: 'C', 128054: 'D'}
+        option_emojis = {
+            127822: 'A', 9973: 'B', 128663: 'C', 128054: 'D',
+            127859: 'E', 128293: 'F', 128123: 'G'
+        }
         main_votes = self.vote_cache.get(str(main_message_id), {})
         for emoji, option in option_emojis.items():
             count = len(main_votes.get(emoji, set()))
@@ -468,8 +472,8 @@ class AITRPGPlugin(NcatBotPlugin):
         candidate_ids = json.loads(candidate_ids_json)
         for cid in candidate_ids:
             input_votes = self.vote_cache.get(cid, {})
-            yay = len(input_votes.get(128077, set())) # 👍
-            nay = len(input_votes.get(128078, set())) # 👎
+            yay = len(input_votes.get(127881, set())) # 🎉
+            nay = len(input_votes.get(128560, set())) # 😰
             net_score = yay - nay
             scores[cid] = net_score
             # 为了显示内容，需要获取消息
