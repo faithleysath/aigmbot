@@ -35,7 +35,7 @@ class MarkdownRenderer:
         except Exception as e:
             LOG.warning(f"关闭渲染器失败: {e}")
 
-    async def render(self, markdown_text: str) -> bytes | None:
+    async def render_markdown(self, markdown_text: str) -> bytes | None:
         """
         将 Markdown 文本渲染成图片的二进制数据。
 

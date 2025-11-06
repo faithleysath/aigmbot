@@ -64,7 +64,7 @@ class EventHandler:
             preview = content[:2000]
             img: bytes | None = None
             if self.renderer:
-                img = await self.renderer.render(preview)
+                img = await self.renderer.render_markdown(preview)
 
             reply_message_id = None
             if img:

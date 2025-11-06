@@ -109,7 +109,7 @@ class GameManager:
             assistant_response = round_info["assistant_response"]
 
             # 3. 渲染并发送图片
-            image_bytes = await self.renderer.render(assistant_response)
+            image_bytes = await self.renderer.render_markdown(assistant_response)
             if not image_bytes:
                 raise Exception("渲染剧情图片失败。")
 
