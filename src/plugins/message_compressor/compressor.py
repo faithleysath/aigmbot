@@ -100,13 +100,6 @@ class MessageCompressorPlugin(NcatBotPlugin):
         if event.message.is_forward_msg() or event.message.filter(File):
             return
 
-        # 过滤掉机器人自身的消息或@机器人的消息
-        if event.user_id == self.bot_id or f"[CQ:at,qq={self.bot_id}]" in event.raw_message:
-            return
-        
-        if self._is_group_admin(event):
-            return
-
         # 将消息加入缓冲区
         self.message_buffers[group_id].append(event)
 
@@ -141,6 +134,8 @@ class MessageCompressorPlugin(NcatBotPlugin):
             if await self._is_bot_admin_in_group(group_id):
                 # 撤回原始消息
                 for msg in messages:
+                    if self._is_group_admin(msg) or msg.user_id == self.bot_id or f"[CQ:at,qq={self.bot_id}]" in msg.raw_message:
+                        continue
                     await asyncio.sleep(0.2) # 短暂延迟以避免过于频繁的 API 调用
                     try:
                         await self.api.delete_msg(msg.message_id)
