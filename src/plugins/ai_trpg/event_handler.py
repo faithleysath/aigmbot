@@ -259,14 +259,22 @@ class EventHandler:
         self, game_id: int, group_id: str, main_message_id: str, emoji_id: str
     ):
         """处理管理员/主持人对主消息的表情回应"""
+        if not self.db:
+            return
+
+        game = await self.db.get_game_by_game_id(game_id)
+        if not game:
+            return
+        
+        if game["is_frozen"]:
+            await self.api.post_group_msg(
+                group_id, text="正在处理其他操作，请稍后再试。", reply=main_message_id
+            )
+            return
+
         if emoji_id == str(EMOJI["CONFIRM"]):
             await self._tally_and_advance(game_id)
         elif emoji_id == str(EMOJI["DENY"]):
-            if not self.db:
-                return
-            game = await self.db.get_game_by_game_id(game_id)
-            if not game:
-                return
             _, result_lines = await self._tally_votes(
                 group_id, main_message_id, game["candidate_custom_input_ids"]
             )
@@ -283,6 +291,7 @@ class EventHandler:
         elif emoji_id == str(EMOJI["RETRACT"]):
             if self.game_manager:
                 await self.game_manager.revert_last_round(game_id)
+
 
     async def _handle_admin_custom_input_reaction(
         self, game_id: int, group_id: str, message_id: str

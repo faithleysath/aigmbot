@@ -186,12 +186,11 @@ class GameManager:
         channel_id = None
         main_message_id = None
         try:
-
             async with self.db.conn.cursor() as cursor:
-                cursor.row_factory = aiosqlite.Row
                 await cursor.execute(
                     "SELECT * FROM games WHERE game_id = ?", (game_id,)
                 )
+
                 game_data = await cursor.fetchone()
             if not game_data:
                 return
