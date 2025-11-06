@@ -12,6 +12,7 @@ from .renderer import MarkdownRenderer
 from .utils import EMOJI, bytes_to_base64
 from .cache import CacheManager
 from .content_fetcher import ContentFetcher
+from .exceptions import TipChangedError
 
 LOG = get_log(__name__)
 
@@ -264,7 +265,7 @@ class GameManager:
                         not latest_tip_data
                         or latest_tip_data[0] != initial_tip_round_id
                     ):
-                        raise RuntimeError("TIP_CHANGED")
+                        raise TipChangedError()
 
                     # 创建新回合
                     await cursor.execute(
@@ -289,16 +290,15 @@ class GameManager:
             await self.cache_manager.save_to_disk()
             await self.checkout_head(game_id)
 
-        except RuntimeError as e:
-            if str(e) == "TIP_CHANGED":
-                if channel_id and main_message_id:
-                    await self.api.post_group_msg(
-                        channel_id,
-                        text="本轮状态已变化，为避免并发冲突本次推进已取消。",
-                        reply=main_message_id,
-                    )
-            else:
-                LOG.error(f"推进失败: {e}", exc_info=True)
+        except TipChangedError:
+            if channel_id and main_message_id:
+                await self.api.post_group_msg(
+                    channel_id,
+                    text="本轮状态已变化，为避免并发冲突本次推进已取消。",
+                    reply=main_message_id,
+                )
+        except Exception as e:
+            LOG.error(f"推进失败: {e}", exc_info=True)
         finally:
             if self.db:
                 await self.db.set_game_frozen_status(game_id, False)

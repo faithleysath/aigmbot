@@ -165,8 +165,7 @@ class Database:
     async def is_game_running(self, channel_id: str) -> bool:
         """检查指定频道当前是否有正在进行的游戏"""
         if not self.conn:
-            LOG.error("数据库未连接，无法查询游戏状态。")
-            return False
+            raise RuntimeError("数据库未连接")
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 "SELECT 1 FROM games WHERE channel_id = ?", (channel_id,)
@@ -177,7 +176,7 @@ class Database:
     async def get_game_by_channel_id(self, channel_id: str):
         """通过 channel_id 获取游戏信息"""
         if not self.conn:
-            return None
+            raise RuntimeError("数据库未连接")
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 "SELECT * FROM games WHERE channel_id = ?", (channel_id,)
@@ -187,7 +186,7 @@ class Database:
     async def get_game_by_game_id(self, game_id: int):
         """通过 game_id 获取游戏信息"""
         if not self.conn:
-            return None
+            raise RuntimeError("数据库未连接")
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 "SELECT * FROM games WHERE game_id = ?", (game_id,)
@@ -197,7 +196,7 @@ class Database:
     async def set_game_frozen_status(self, game_id: int, is_frozen: bool):
         """设置游戏的冻结状态"""
         if not self.conn:
-            return
+            raise RuntimeError("数据库未连接")
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 "UPDATE games SET is_frozen = ? WHERE game_id = ?", (is_frozen, game_id)
@@ -209,7 +208,7 @@ class Database:
     ):
         """更新候选自定义输入ID"""
         if not self.conn:
-            return
+            raise RuntimeError("数据库未连接")
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 "UPDATE games SET candidate_custom_input_ids = ? WHERE game_id = ?",
@@ -220,7 +219,7 @@ class Database:
     async def get_host_user_id(self, channel_id: str) -> str | None:
         """获取游戏主持人ID"""
         if not self.conn:
-            return None
+            raise RuntimeError("数据库未连接")
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 "SELECT host_user_id FROM games WHERE channel_id = ?", (channel_id,)
@@ -279,7 +278,7 @@ class Database:
     async def update_game_head_branch(self, game_id: int, branch_id: int):
         """更新游戏的 head_branch_id"""
         if not self.conn:
-            return
+            raise RuntimeError("数据库未连接")
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 "UPDATE games SET head_branch_id = ? WHERE game_id = ?",
@@ -290,7 +289,7 @@ class Database:
     async def get_game_and_head_branch_info(self, game_id: int):
         """获取游戏和 head 分支信息"""
         if not self.conn:
-            return None
+            raise RuntimeError("数据库未连接")
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 """SELECT g.channel_id, b.tip_round_id
@@ -304,7 +303,7 @@ class Database:
     async def get_round_info(self, round_id: int):
         """获取回合信息"""
         if not self.conn:
-            return None
+            raise RuntimeError("数据库未连接")
         async with self.conn.cursor() as cursor:
             await cursor.execute("SELECT * FROM rounds WHERE round_id = ?", (round_id,))
             return await cursor.fetchone()
@@ -312,7 +311,7 @@ class Database:
     async def update_game_main_message(self, game_id: int, main_message_id: str):
         """更新游戏的主消息ID"""
         if not self.conn:
-            return
+            raise RuntimeError("数据库未连接")
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 "UPDATE games SET main_message_id = ?, candidate_custom_input_ids = '[]' WHERE game_id = ?",
@@ -323,7 +322,7 @@ class Database:
     async def update_branch_tip(self, branch_id: int, round_id: int):
         """更新分支的 tip_round_id (用于推进或回退)"""
         if not self.conn:
-            return
+            raise RuntimeError("数据库未连接")
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 "UPDATE branches SET tip_round_id = ? WHERE branch_id = ?",
@@ -334,7 +333,7 @@ class Database:
     async def delete_game(self, game_id: int):
         """删除游戏"""
         if not self.conn:
-            return
+            raise RuntimeError("数据库未连接")
         async with self.conn.cursor() as cursor:
             await cursor.execute("DELETE FROM games WHERE game_id = ?", (game_id,))
             await self.conn.commit()

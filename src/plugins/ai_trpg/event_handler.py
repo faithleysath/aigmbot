@@ -261,6 +261,61 @@ class EventHandler:
             LOG.error(f"获取群 {group_id} 成员 {user_id} 信息失败: {e}")
             return False
 
+    async def _handle_admin_main_message_reaction(
+        self, game_id: int, group_id: str, main_message_id: str, emoji_id: str
+    ):
+        """处理管理员/主持人对主消息的表情回应"""
+        if emoji_id == str(EMOJI["CONFIRM"]):
+            await self._tally_and_advance(game_id)
+        elif emoji_id == str(EMOJI["DENY"]):
+            if not self.db:
+                return
+            game = await self.db.get_game_by_game_id(game_id)
+            if not game:
+                return
+            _, result_lines = await self._tally_votes(
+                group_id, main_message_id, game["candidate_custom_input_ids"]
+            )
+            await self.api.post_group_msg(
+                group_id,
+                text="\n".join(result_lines)
+                + f"\n由于一位管理员/主持人的反对票，本轮投票并未获通过，将重新开始本輪。",
+                reply=main_message_id,
+            )
+            if self.cache_manager:
+                self.cache_manager.vote_cache[group_id] = {}  # 清理本轮投票缓存
+                await self.cache_manager.save_to_disk()
+            if self.game_manager:
+                await self.game_manager.checkout_head(game_id)
+        elif emoji_id == str(EMOJI["RETRACT"]):
+            if self.game_manager:
+                await self.game_manager.revert_last_round(game_id)
+
+    async def _handle_admin_custom_input_reaction(
+        self, game_id: int, group_id: str, message_id: str
+    ):
+        """处理管理员/主持人撤回自定义输入的行为"""
+        if not self.db:
+            return
+        game = await self.db.get_game_by_game_id(game_id)
+        if not game:
+            return
+        candidate_ids = json.loads(game["candidate_custom_input_ids"])
+        if message_id not in candidate_ids:
+            return
+
+        candidate_ids.remove(message_id)
+        await self.db.update_candidate_custom_input_ids(
+            game_id, json.dumps(candidate_ids)
+        )
+        await self.api.post_group_msg(
+            group_id, text=" 一条自定义输入已被撤回。", reply=message_id
+        )
+        # 从缓存中删除
+        if self.cache_manager and group_id in self.cache_manager.vote_cache:
+            self.cache_manager.vote_cache[group_id].pop(message_id, None)
+            await self.cache_manager.save_to_disk()
+
     async def _handle_game_reaction(self, event: NoticeEvent):
         """处理游戏进行中的表情回应，包括投票、撤回和管理员操作"""
         if (
@@ -276,86 +331,45 @@ class EventHandler:
         message_id = str(event.message_id)
         emoji_id = str(event.emoji_like_id)
 
-        if not self.db:
-            return
         game = await self.db.get_game_by_channel_id(group_id)
-        if not game:
+        if not game or game["is_frozen"]:
             return
 
-        if game["is_frozen"]:
-            LOG.info(f"游戏 {game['game_id']} 已冻结，忽略表情回应。")
+        game_id = game["game_id"]
+        main_message_id = str(game["main_message_id"])
+        candidate_ids = json.loads(game["candidate_custom_input_ids"])
+
+        # --- 主动防御：只处理对有效消息的回应 ---
+        if message_id != main_message_id and message_id not in candidate_ids:
             return
-
-        game_id, main_message_id, candidate_ids_json = (
-            game["game_id"],
-            game["main_message_id"],
-            game["candidate_custom_input_ids"],
-        )
-        candidate_ids: list = json.loads(candidate_ids_json)
-
-        # --- 主动防御：只缓存有效投票 ---
-        if message_id != str(main_message_id) and message_id not in candidate_ids:
-            return  # 不是对当前游戏有效消息的回应，直接忽略
 
         # 更新投票缓存
-        group_vote_cache = self.cache_manager.vote_cache.setdefault(group_id, {})
-        message_votes = group_vote_cache.setdefault(message_id, {"votes": {}})
-
-        # 确保 'votes' 键存在
-        if "votes" not in message_votes:
-            message_votes["votes"] = {}
-
-        vote_set = message_votes["votes"].setdefault(emoji_id, set())
-        if event.is_add:
-            vote_set.add(user_id)
-        else:
-            vote_set.discard(user_id)
-        await self.cache_manager.save_to_disk()
-
-        is_admin_or_host = await self._is_group_admin_or_host(group_id, user_id)
-
-        # 处理管理员/主持人往main_message_id上贴表情的行为
-        if message_id == str(main_message_id) and is_admin_or_host:
-            # 判断三种操作
-            if emoji_id == str(EMOJI["CONFIRM"]):
-                await self._tally_and_advance(int(game_id))
-                return
-            elif emoji_id == str(EMOJI["DENY"]):
-                _, result_lines = await self._tally_votes(
-                    group_id, str(main_message_id), candidate_ids_json
-                )
-                await self.api.post_group_msg(
-                    group_id,
-                    text="\n".join(result_lines)
-                    + f"\n由于一位管理员/主持人的反对票，本轮投票并未获通过，将重新开始本輪。",
-                    reply=message_id,
-                )
-                self.cache_manager.vote_cache[group_id] = {}  # 清理本轮投票缓存
-                await self.cache_manager.save_to_disk()
-                await self.game_manager.checkout_head(int(game_id))
-                return
-            elif emoji_id == str(EMOJI["RETRACT"]):
-                await self.game_manager.revert_last_round(int(game_id))
-                return
-
-        # 处理管理员/主持人撤回自定义输入的行为
-        if (
-            message_id in candidate_ids
-            and is_admin_or_host
-            and emoji_id == str(EMOJI["CANCEL"])
-        ):
-            candidate_ids.remove(message_id)
-            await self.db.update_candidate_custom_input_ids(
-                game_id, json.dumps(candidate_ids)
-            )
-            await self.api.post_group_msg(
-                group_id, text=" 一条自定义输入已被撤回。", reply=message_id
-            )
-            # 从缓存中删除
-            if group_id in self.cache_manager.vote_cache:
-                self.cache_manager.vote_cache[group_id].pop(message_id, None)
+        if self.cache_manager:
+            group_vote_cache = self.cache_manager.vote_cache.setdefault(group_id, {})
+            message_votes = group_vote_cache.setdefault(message_id, {"votes": {}})
+            if "votes" not in message_votes:
+                message_votes["votes"] = {}
+            vote_set = message_votes["votes"].setdefault(emoji_id, set())
+            if event.is_add:
+                vote_set.add(user_id)
+            else:
+                vote_set.discard(user_id)
             await self.cache_manager.save_to_disk()
+
+        # 检查是否是管理员或主持人
+        is_admin_or_host = await self._is_group_admin_or_host(group_id, user_id)
+        if not is_admin_or_host:
             return
+
+        # 根据消息ID和表情ID分发给不同的处理函数
+        if message_id == main_message_id:
+            await self._handle_admin_main_message_reaction(
+                game_id, group_id, main_message_id, emoji_id
+            )
+        elif message_id in candidate_ids and emoji_id == str(EMOJI["CANCEL"]):
+            await self._handle_admin_custom_input_reaction(
+                game_id, group_id, message_id
+            )
 
     async def _tally_votes(
         self, group_id: str, main_message_id: str, candidate_ids_json: str
