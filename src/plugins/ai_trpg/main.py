@@ -539,17 +539,14 @@ class AITRPGPlugin(NcatBotPlugin):
         # 2. 找出胜利者并获取内容
         max_score = max(scores.values())
         winners = [k for k, v in scores.items() if v == max_score]
-        winner_content = "\n".join(map(lambda x: f"选择选项 {x}" if x in 'ABCDEFG' else "".join(s.text for s in (await self.api.get_msg(x)).message.filter_text()), winners))
-        if len(winners) == 1 and 'A' <= winners[0] <= 'G':
-            winner_content = f"选择选项 {winners[0]}"
-        else:
-            try:
-                msg_event = await self.api.get_msg(winners[0])
-                winner_content = "".join(s.text for s in msg_event.message.filter_text())
-            except Exception as e:
-                LOG.error(f"获取胜利者自定义输入内容失败: {e}")
-                await self.api.post_group_msg(channel_id, text="获取胜利者内容失败，游戏中断。")
-                return
+        winner_lines = []
+        for x in winners:
+            if x in 'ABCDEFG':
+                winner_lines.append(f"选择选项 {x}")
+            else:
+                msg = await self.api.get_msg(x)
+                winner_lines.append("".join(s.text for s in msg.message.filter_text()))
+        winner_content = "\n".join(winner_lines)
 
         # 3. 版本校验
         async with self.db.conn.cursor() as cursor:
