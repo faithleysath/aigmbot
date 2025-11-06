@@ -179,11 +179,11 @@ class AITRPGPlugin(NcatBotPlugin):
             LOG.info(f"游戏 {game_id} 收到新的自定义输入: {custom_input_message_id}")
 
             # 为自定义输入添加投票表情
-            for emoji in [127881, 128560, 10060]: # 🎉, 😰, ❌ (沿用旧版表情)
+            for emoji_key in ["YAY", "NAY", "DENY"]:
                 try:
-                    await self.api.set_msg_emoji_like(custom_input_message_id, emoji)
+                    await self.api.set_msg_emoji_like(custom_input_message_id, EMOJI[emoji_key])
                 except Exception as e:
-                    LOG.warning(f"为自定义输入 {custom_input_message_id} 贴表情 {emoji} 失败: {e}")
+                    LOG.warning(f"为自定义输入 {custom_input_message_id} 贴表情 {EMOJI[emoji_key]} 失败: {e}")
 
     @on_notice
     async def handle_emoji_reaction(self, event: NoticeEvent):
