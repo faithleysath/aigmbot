@@ -67,7 +67,6 @@ class AITRPGPlugin(NcatBotPlugin):
             )
         except ValueError as e:
             LOG.error(f"LLM API 初始化失败: {e}")
-            raise  # 阻止插件加载
 
         # 4. 初始化渲染器
         self.renderer = MarkdownRenderer()
