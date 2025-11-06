@@ -122,7 +122,8 @@ class AITRPGPlugin(NcatBotPlugin):
             await event.reply("处理文件时出错。", at=False)
 
     @on_notice
-    async def on_emoji_like(self, event: NoticeEvent):
+    async def listen_start_game_emoji(self, event: NoticeEvent):
+        """监听表情点赞以确认或取消新游戏创建"""
             
         if event.notice_type != "group_msg_emoji_like":
             return
@@ -158,9 +159,40 @@ class AITRPGPlugin(NcatBotPlugin):
             finally:
                 del self.pending_new_games[event.message_id]
         elif event.emoji_like_id == "127881":
-            # 游戏开始
+            # 检查当前是否已有运行中的游戏
+            if self.db and await self.db.is_game_running(str(event.group_id)):
+                await self.api.post_group_msg(event.group_id, " 当前已有正在进行的游戏，无法创建新游戏。如需创建新游戏，请先结束当前游戏。", at=event.user_id, reply=event.message_id)
+                LOG.info(f"用户 {event.user_id} 尝试创建新游戏，但当前已有运行中的游戏。")
+                await self.api.set_msg_emoji_like(event.message_id, "9749")
+                await self.api.set_msg_emoji_like(event.message_id, "127881", set=False)
+                return
+            # 开始游戏
             await self.api.set_msg_emoji_like(event.message_id, "127881")
             await self.api.set_msg_emoji_like(event.message_id, "9749", set=False)
-            await self.api.post_group_msg(event.group_id, " 新的 AI TRPG 游戏已创建！请稍候，正在初始化游戏环境...", at=event.user_id, reply=event.message_id)
-            LOG.info(f"用户 {event.user_id} 确认创建新游戏。初始化游戏环境中...")
-            # TODO
+            del self.pending_new_games[event.message_id]
+            await self.start_new_game(
+                group_id=str(event.group_id),
+                user_id=pending_game["user_id"],
+                system_prompt=pending_game["system_prompt"]
+            )
+
+    async def start_new_game(self, group_id: str, user_id: str, system_prompt: str):
+        # 先立即在数据库里创建一局游戏，表示该频道已有运行中的游戏，只需要先添加game记录，其中main_message_id、candidate_custom_input_ids、head_branch_id等字段可以先留空，后续再更新
+        # 接着调用llm获取开场白
+        initial_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": "开始"}
+        ]
+        # 如果开场白获取失败了，删除这局游戏，并发送失败消息
+        # 如果开场白获取成功了
+        # 先创建一个round记录，parent_id填-1，player_choice填“开始”，assistant_response填开场白
+        # 再创建一个branch记录，name填“主线”，tip_round_id填刚创建的round记录的id，把game的head_branch_id更新为这个branch的id
+        # checkout到head上
+
+    async def checkout_head(self, game_id):
+        """检出游戏head指向的分支"""
+        # 清空游戏的candidate_custom_input_ids和main_message_id
+        # 找出head分支最新round的assistant_response
+        # 渲染为图片，发送到频道里
+        # 设置main_message_id
+        # 贴上选项表情
