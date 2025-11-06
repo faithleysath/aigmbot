@@ -551,10 +551,6 @@ class AITRPGPlugin(NcatBotPlugin):
             tip_now_data = await cursor.fetchone()
             if not tip_now_data: return
             
-            # 检查在计票期间是否有其他操作改变了游戏状态
-            # 这是为了防止并发操作导致的状态不一致
-            # 之前的代码在这里有一个逻辑上的小问题，现在已经修正
-            # 我们需要比较的是在函数开始时获取的 tip_round_id 和现在的是否一致
             await cursor.execute("SELECT tip_round_id FROM branches WHERE branch_id = ?", (head_branch_id,))
             latest_tip_data = await cursor.fetchone()
             if not latest_tip_data or latest_tip_data[0] != tip_now_data[0]:
