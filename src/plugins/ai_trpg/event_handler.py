@@ -306,9 +306,7 @@ class EventHandler:
         )
         # 从缓存中删除
         if self.cache_manager:
-            group_cache = await self.cache_manager.get_group_vote_cache(group_id)
-            if message_id in group_cache:
-                await self.cache_manager.clear_group_vote_cache(group_id)
+            await self.cache_manager.remove_vote_item(group_id, message_id)
 
     async def _handle_game_reaction(self, event: NoticeEvent):
         """处理游戏进行中的表情回应，包括投票、撤回和管理员操作"""

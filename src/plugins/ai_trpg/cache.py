@@ -6,6 +6,7 @@ import aiofiles
 import aiofiles.os as aio_os
 from typing import TypedDict, NotRequired
 import asyncio
+from copy import deepcopy
 
 from ncatbot.utils import get_log
 
@@ -74,12 +75,19 @@ class CacheManager:
 
     async def get_group_vote_cache(self, group_id: str) -> dict[str, VoteCacheItem]:
         async with self._cache_lock:
-            return self.vote_cache.get(group_id, {})
+            return deepcopy(self.vote_cache.get(group_id, {}))
+
+    async def remove_vote_item(self, group_id: str, message_id: str):
+        async with self._cache_lock:
+            group_cache = self.vote_cache.get(group_id)
+            if group_cache is not None:
+                group_cache.pop(message_id, None)
+        await self.save_to_disk()
 
     async def clear_group_vote_cache(self, group_id: str):
         async with self._cache_lock:
             if group_id in self.vote_cache:
-                self.vote_cache[group_id] = {}
+                self.vote_cache[group_id].clear()
         await self.save_to_disk()
 
     async def load_from_disk(self):
