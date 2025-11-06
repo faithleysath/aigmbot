@@ -1,13 +1,16 @@
 from ncatbot.plugin_system import NcatBotPlugin, command_registry, on_notice, filter_registry
+from typing import cast
+from ncatbot.plugin_system import NcatBotPlugin, command_registry, on_notice, filter_registry
 from ncatbot.core.event import GroupMessageEvent, NoticeEvent
-from ncatbot.core.event.message_segment import File
+from ncatbot.core.event.message_segment import File, Reply
 from ncatbot.utils import get_log
 from pathlib import Path
 import aiohttp
+import json
 from datetime import datetime, timedelta
 
 from .db import Database
-from .llm_api import LLM_API
+from .llm_api import LLM_API, ChatCompletionMessageParam
 from .renderer import MarkdownRenderer
 
 LOG = get_log(__name__)
@@ -75,16 +78,22 @@ class AITRPGPlugin(NcatBotPlugin):
     # --- 核心游戏逻辑 (待实现) ---
 
     @filter_registry.group_filter
-    async def listen_file_message(self, event: GroupMessageEvent):
-        """监听群文件消息，检查是否是.txt或.md文件"""
+    async def handle_group_message(self, event: GroupMessageEvent):
+        """处理群聊消息，包括文件上传启动和自定义输入"""
+        # 文件上传启动游戏
         files = event.message.filter(File)
-        if not files:
+        if files and files[0].file.endswith((".txt", ".md")):
+            await self._handle_file_upload(event, files[0])
             return
 
-        file = files[0]
-        if not file.file.endswith((".txt", ".md")):
+        # 自定义输入
+        reply_segments = event.message.filter(Reply)
+        if reply_segments:
+            await self._handle_custom_input(event, reply_segments[0])
             return
 
+    async def _handle_file_upload(self, event: GroupMessageEvent, file: File):
+        """处理.txt或.md文件上传，作为开启游戏的入口"""
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(file.url) as response:
@@ -108,9 +117,10 @@ class AITRPGPlugin(NcatBotPlugin):
                 return
 
             if self.db and await self.db.is_game_running(str(event.group_id)):
-                await self.api.set_msg_emoji_like(reply_message_id, "9749")
+                await self.api.set_msg_emoji_like(reply_message_id, "9749") # 游戏进行中，显示取消按钮
             else:
-                await self.api.set_msg_emoji_like(reply_message_id, "127881")
+                await self.api.set_msg_emoji_like(reply_message_id, "127881") # 无游戏，显示确认按钮
+            
             self.pending_new_games[reply_message_id] = {
                 "user_id": event.user_id,
                 "system_prompt": content,
@@ -118,81 +128,263 @@ class AITRPGPlugin(NcatBotPlugin):
                 "create_time": datetime.now(),
             }
         except Exception as e:
-            LOG.error(f"处理文件消息时出错: {e}")
+            LOG.error(f"处理文件消息时出错: {e}", exc_info=True)
             await event.reply("处理文件时出错。", at=False)
 
-    @on_notice
-    async def listen_start_game_emoji(self, event: NoticeEvent):
-        """监听表情点赞以确认或取消新游戏创建"""
+    async def _handle_custom_input(self, event: GroupMessageEvent, reply: Reply):
+        """处理对主消息的回复，作为自定义输入"""
+        if not self.db or not self.db.conn: return
+
+        group_id = str(event.group_id)
+        replied_to_id = reply.id
+
+        async with self.db.conn.cursor() as cursor:
+            await cursor.execute(
+                "SELECT game_id, candidate_custom_input_ids FROM games WHERE channel_id = ? AND main_message_id = ?",
+                (group_id, replied_to_id)
+            )
+            game_row = await cursor.fetchone()
+
+            if not game_row:
+                return # 不是对当前游戏主消息的回复
+
+            game_id, candidate_ids_json = game_row
             
+            custom_input_message_id = str(event.message_id)
+            
+            candidate_ids = json.loads(candidate_ids_json)
+            candidate_ids.append(custom_input_message_id)
+
+            await cursor.execute(
+                "UPDATE games SET candidate_custom_input_ids = ? WHERE game_id = ?",
+                (json.dumps(candidate_ids), game_id)
+            )
+            await self.db.conn.commit()
+            
+            LOG.info(f"游戏 {game_id} 收到新的自定义输入: {custom_input_message_id}")
+
+            # 为自定义输入添加投票表情
+            for emoji in [128077, 128078, 128465]: # 👍, 👎, 🗑️
+                try:
+                    await self.api.set_msg_emoji_like(custom_input_message_id, emoji)
+                except Exception as e:
+                    LOG.warning(f"为自定义输入 {custom_input_message_id} 贴表情 {emoji} 失败: {e}")
+
+    @on_notice
+    async def handle_emoji_reaction(self, event: NoticeEvent):
+        """处理表情回应，包括游戏启动、投票、撤回等"""
         if event.notice_type != "group_msg_emoji_like":
             return
 
-        # Clean up expired pending games
-        now = datetime.now()
-        expired_games = [
-            msg_id for msg_id, game_data in self.pending_new_games.items()
-            if now - game_data["create_time"] > timedelta(minutes=5)
-        ]
-        for msg_id in expired_games:
-            del self.pending_new_games[msg_id]
-
-        if not event.message_id:
+        # 检查是否是待处理的新游戏
+        if event.message_id in self.pending_new_games:
+            await self._handle_new_game_confirmation(event)
             return
-
-        pending_game = self.pending_new_games.get(event.message_id)
+        
+        # 后续处理游戏中的表情回应...
+        # ... (第四步的代码将在这里实现)
+    
+    async def _handle_new_game_confirmation(self, event: NoticeEvent):
+        """处理新游戏创建的表情确认"""
+        pending_game = self.pending_new_games.get(str(event.message_id))
         if not pending_game:
             return
 
-        if pending_game["user_id"] != event.user_id:
+        # 清理过期的请求
+        if datetime.now() - pending_game["create_time"] > timedelta(minutes=5):
+            del self.pending_new_games[str(event.message_id)]
             return
 
-        if event.emoji_like_id == "9749":
+        # 权限检查：只有发起人可以确认或取消
+        if str(event.user_id) != pending_game["user_id"]:
+            return
+
+        group_id = str(event.group_id)
+        message_id = str(event.message_id)
+
+        if event.emoji_like_id == "9749": # 取消
             try:
                 await self.api.delete_msg(pending_game["message_id"])
-                await self.api.set_msg_emoji_like(event.message_id, "127881", set=False)
-                await self.api.set_msg_emoji_like(event.message_id, "9749")
-                await self.api.post_group_msg(event.group_id, " 新游戏创建已取消。", at=event.user_id, reply=event.message_id)
-                LOG.info(f"用户 {event.user_id} 取消了新游戏创建请求。删除消息 {pending_game['message_id']}")
+                await self.api.set_msg_emoji_like(message_id, "127881", set=False)
+                await self.api.set_msg_emoji_like(message_id, "9749")
+                await self.api.post_group_msg(group_id, " 新游戏创建已取消。", at=event.user_id, reply=message_id)
+                LOG.info(f"用户 {event.user_id} 取消了新游戏创建请求。")
             except Exception as e:
-                LOG.error(f"删除消息失败: {e}")
+                LOG.error(f"处理取消新游戏时出错: {e}")
             finally:
-                del self.pending_new_games[event.message_id]
-        elif event.emoji_like_id == "127881":
-            # 检查当前是否已有运行中的游戏
-            if self.db and await self.db.is_game_running(str(event.group_id)):
-                await self.api.post_group_msg(event.group_id, " 当前已有正在进行的游戏，无法创建新游戏。如需创建新游戏，请先结束当前游戏。", at=event.user_id, reply=event.message_id)
-                LOG.info(f"用户 {event.user_id} 尝试创建新游戏，但当前已有运行中的游戏。")
-                await self.api.set_msg_emoji_like(event.message_id, "9749")
-                await self.api.set_msg_emoji_like(event.message_id, "127881", set=False)
+                del self.pending_new_games[message_id]
+
+        elif event.emoji_like_id == "127881": # 确认
+            if self.db and await self.db.is_game_running(group_id):
+                await self.api.post_group_msg(group_id, " 当前已有正在进行的游戏，无法创建新游戏。", at=event.user_id, reply=message_id)
+                await self.api.set_msg_emoji_like(message_id, "9749")
+                await self.api.set_msg_emoji_like(message_id, "127881", set=False)
                 return
-            # 开始游戏
-            await self.api.set_msg_emoji_like(event.message_id, "127881")
-            await self.api.set_msg_emoji_like(event.message_id, "9749", set=False)
-            del self.pending_new_games[event.message_id]
+            
+            await self.api.set_msg_emoji_like(message_id, "127881")
+            await self.api.set_msg_emoji_like(message_id, "9749", set=False)
+            del self.pending_new_games[message_id]
+            
             await self.start_new_game(
-                group_id=str(event.group_id),
+                group_id=group_id,
                 user_id=pending_game["user_id"],
                 system_prompt=pending_game["system_prompt"]
             )
 
-    async def start_new_game(self, group_id: str, user_id: str, system_prompt: str):
-        # 先立即在数据库里创建一局游戏，表示该频道已有运行中的游戏，只需要先添加game记录，其中main_message_id、candidate_custom_input_ids、head_branch_id等字段可以先留空，后续再更新
-        # 接着调用llm获取开场白
-        initial_messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": "开始"}
-        ]
-        # 如果开场白获取失败了，删除这局游戏，并发送失败消息
-        # 如果开场白获取成功了
-        # 先创建一个round记录，parent_id填-1，player_choice填“开始”，assistant_response填开场白
-        # 再创建一个branch记录，name填“主线”，tip_round_id填刚创建的round记录的id，把game的head_branch_id更新为这个branch的id
-        # checkout到head上
+    async def _is_group_admin_or_host(self, group_id: str, user_id: str) -> bool:
+        """检查用户是否为群管理员或游戏主持人"""
+        if not self.db or not self.db.conn:
+            return False
+        try:
+            async with self.db.conn.cursor() as cursor:
+                await cursor.execute("SELECT host_user_id FROM games WHERE channel_id = ?", (group_id,))
+                game = await cursor.fetchone()
+                if game and user_id == str(game[0]):
+                    return True # Is the host
 
-    async def checkout_head(self, game_id):
-        """检出游戏head指向的分支"""
-        # 清空游戏的candidate_custom_input_ids和main_message_id
-        # 找出head分支最新round的assistant_response
-        # 渲染为图片，发送到频道里
-        # 设置main_message_id
-        # 贴上选项表情
+            member_info = await self.api.get_group_member_info(group_id, user_id)
+            return member_info.role in ["admin", "owner"]
+        except Exception as e:
+            LOG.error(f"获取群 {group_id} 成员 {user_id} 信息失败: {e}")
+            return False
+
+    async def start_new_game(self, group_id: str, user_id: str, system_prompt: str):
+        """开始一个新游戏"""
+        if not self.db or not self.db.conn or not self.llm_api:
+            await self.api.post_group_msg(group_id, text="❌ 插件未完全初始化，无法开始游戏。")
+            return
+
+        game_id = None
+        try:
+            # 1. 在数据库中创建游戏记录
+            async with self.db.conn.cursor() as cursor:
+                await cursor.execute(
+                    "INSERT INTO games (channel_id, host_user_id, system_prompt) VALUES (?, ?, ?)",
+                    (group_id, user_id, system_prompt)
+                )
+                game_id = cursor.lastrowid
+                await self.db.conn.commit()
+            LOG.info(f"群 {group_id} 创建了新游戏，ID: {game_id}。")
+
+            # 2. 调用 LLM 获取开场白
+            await self.api.post_group_msg(group_id, text="🚀 新游戏即将开始... 正在联系 GM 生成开场白...")
+            initial_messages: list[ChatCompletionMessageParam] = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "开始"}
+            ]
+            assistant_response, _ = await self.llm_api.get_completion(initial_messages)
+
+            if not assistant_response:
+                raise Exception("LLM 未能生成开场白。")
+
+            # 3. 创建 Round 和 Branch
+            async with self.db.conn.cursor() as cursor:
+                # 创建第一个 round
+                await cursor.execute(
+                    "INSERT INTO rounds (game_id, parent_id, player_choice, assistant_response) VALUES (?, ?, ?, ?)",
+                    (game_id, -1, "开始", assistant_response)
+                )
+                round_id = cursor.lastrowid
+
+                # 创建 "main" 分支
+                await cursor.execute(
+                    "INSERT INTO branches (game_id, name, tip_round_id) VALUES (?, ?, ?)",
+                    (game_id, "main", round_id)
+                )
+                branch_id = cursor.lastrowid
+
+                # 更新 game 的 head_branch_id
+                await cursor.execute(
+                    "UPDATE games SET head_branch_id = ? WHERE game_id = ?",
+                    (branch_id, game_id)
+                )
+                await self.db.conn.commit()
+            
+            LOG.info(f"游戏 {game_id} 的初始 round 和 branch 已创建。")
+
+            # 4. 检出 head，向玩家展示
+            if game_id is not None:
+                await self.checkout_head(game_id)
+
+        except Exception as e:
+            LOG.error(f"开始新游戏失败: {e}", exc_info=True)
+            await self.api.post_group_msg(group_id, text=f"❌ 启动游戏失败: {e}")
+            # 如果游戏记录已创建，则删除
+            if game_id and self.db and self.db.conn:
+                async with self.db.conn.cursor() as cursor:
+                    await cursor.execute("DELETE FROM games WHERE game_id = ?", (game_id,))
+                    await self.db.conn.commit()
+                LOG.info(f"已清理失败的游戏记录，ID: {game_id}。")
+
+
+    async def checkout_head(self, game_id: int):
+        """检出游戏 head 指向的分支的最新回合，并向玩家展示"""
+        if not self.db or not self.db.conn or not self.renderer:
+            LOG.error(f"检出 head 失败：组件未初始化。")
+            return
+
+        try:
+            async with self.db.conn.cursor() as cursor:
+                # 1. 获取游戏和 head 分支信息
+                await cursor.execute(
+                    """SELECT g.channel_id, b.tip_round_id
+                       FROM games g
+                       JOIN branches b ON g.head_branch_id = b.branch_id
+                       WHERE g.game_id = ?""",
+                    (game_id,)
+                )
+                game_info = await cursor.fetchone()
+                if not game_info:
+                    raise Exception("找不到游戏或其 head 分支。")
+                
+                channel_id, tip_round_id = game_info
+
+                # 2. 获取最新回合的剧情
+                await cursor.execute(
+                    "SELECT assistant_response FROM rounds WHERE round_id = ?",
+                    (tip_round_id,)
+                )
+                round_info = await cursor.fetchone()
+                if not round_info:
+                    raise Exception("找不到最新的回合信息。")
+                
+                assistant_response = round_info[0]
+
+            # 3. 渲染并发送图片
+            image_bytes = await self.renderer.render(assistant_response)
+            if not image_bytes:
+                raise Exception("渲染剧情图片失败。")
+
+            main_message_id = await self.api.post_group_file(channel_id, image=f"data:image/png;base64,{bytes_to_base64(image_bytes)}")
+            if not main_message_id:
+                raise Exception("发送剧情图片失败。")
+
+            # 4. 更新数据库
+            async with self.db.conn.cursor() as cursor:
+                await cursor.execute(
+                    "UPDATE games SET main_message_id = ?, candidate_custom_input_ids = ? WHERE game_id = ?",
+                    (main_message_id, "[]", game_id)
+                )
+                await self.db.conn.commit()
+
+            # 5. 添加表情回应
+            emoji_map = {
+                'A': 127822, 'B': 9973, 'C': 128663, 'D': 128054,
+                'Confirm': 127881, 'Deny': 10060
+            }
+            for _, emoji_id in emoji_map.items():
+                try:
+                    await self.api.set_msg_emoji_like(main_message_id, emoji_id)
+                except Exception as e:
+                    LOG.warning(f"为消息 {main_message_id} 贴表情 {emoji_id} 失败: {e}")
+            
+            LOG.info(f"游戏 {game_id} 已成功检出 head，主消息 ID: {main_message_id}")
+
+        except Exception as e:
+            LOG.error(f"检出 head (game_id: {game_id}) 时出错: {e}", exc_info=True)
+            channel_id_str = ""
+            if 'channel_id' in locals() and locals()['channel_id']:
+                channel_id_str = str(locals()['channel_id'])
+            
+            if channel_id_str:
+                await self.api.post_group_msg(channel_id_str, text=f"❌ 更新游戏状态失败: {e}")
