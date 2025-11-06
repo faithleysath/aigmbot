@@ -1,7 +1,7 @@
 import aiosqlite
 from ncatbot.utils import get_log
 from contextlib import asynccontextmanager
-import random
+import itertools
 
 LOG = get_log(__name__)
 
@@ -10,6 +10,7 @@ class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.conn = None
+        self._savepoint_counter = itertools.count()
 
     async def connect(self):
         """连接到数据库并进行初始化"""
@@ -19,6 +20,7 @@ class Database:
             await self.conn.execute("PRAGMA journal_mode=WAL;")
             await self.conn.execute("PRAGMA synchronous=NORMAL;")
             await self.conn.execute("PRAGMA foreign_keys = ON;")
+            await self.conn.execute("PRAGMA busy_timeout=3000;")  # 3s
             await self.init_db()
             LOG.info(f"成功连接并初始化数据库: {self.db_path}")
         except Exception as e:
@@ -143,13 +145,14 @@ class Database:
 
         if self.conn.in_transaction:
             # Nested transaction: use savepoints
-            savepoint_name = f"savepoint_{random.randint(0, 10000)}"
+            savepoint_name = f"sp_{next(self._savepoint_counter)}"
             try:
                 await self.conn.execute(f"SAVEPOINT {savepoint_name};")
                 yield
                 await self.conn.execute(f"RELEASE SAVEPOINT {savepoint_name};")
             except Exception:
                 await self.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name};")
+                await self.conn.execute(f"RELEASE SAVEPOINT {savepoint_name};")
                 raise
         else:
             # Top-level transaction
