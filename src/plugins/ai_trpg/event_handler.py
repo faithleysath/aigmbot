@@ -175,9 +175,9 @@ class EventHandler:
         message_id_str = str(event.message_id)
 
         # 清理过期的请求
-        timeout_minutes = self.config.get("pending_game_timeout", 5)
+        timeout_seconds = int(self.config.get("pending_game_timeout", 300))
         if datetime.now(timezone.utc) - pending_game["create_time"] > timedelta(
-            minutes=timeout_minutes
+            seconds=timeout_seconds
         ):
             await self.cache_manager.remove_pending_game(message_id_str)
             return
