@@ -162,6 +162,7 @@ class AITRPGPlugin(NcatBotPlugin):
         self.register_config("openai_api_key", "YOUR_API_KEY_HERE")
         self.register_config("openai_base_url", "https://api.openai.com/v1")
         self.register_config("openai_model_name", "gpt-4-turbo")
+        self.register_config("pending_game_timeout", 5, "新游戏等待确认的超时时间（分钟）")
         LOG.debug(f"[{self.name}] 配置项注册完毕。")
 
         # 2. 初始化数据库和缓存路径
@@ -349,8 +350,9 @@ class AITRPGPlugin(NcatBotPlugin):
             return
 
         # 清理过期的请求
+        timeout_minutes = self.config.get("pending_game_timeout", 5)
         if datetime.now(timezone.utc) - pending_game["create_time"] > timedelta(
-            minutes=5
+            minutes=timeout_minutes
         ):
             del self.pending_new_games[message_id_str]
             await self._save_cache_to_disk()
@@ -443,8 +445,6 @@ class AITRPGPlugin(NcatBotPlugin):
         try:
             # 1. 在数据库中创建游戏记录
             game_id = await self.db.create_game(group_id, user_id, system_prompt)
-            if not game_id:
-                raise Exception("创建游戏失败")
             LOG.info(f"群 {group_id} 创建了新游戏，ID: {game_id}。")
 
             # 2. 调用 LLM 获取开场白
@@ -464,12 +464,7 @@ class AITRPGPlugin(NcatBotPlugin):
             round_id = await self.db.create_round(
                 game_id, -1, "开始", assistant_response
             )
-            if not round_id:
-                raise Exception("创建初始 round 失败")
-
             branch_id = await self.db.create_branch(game_id, "main", round_id)
-            if not branch_id:
-                raise Exception("创建初始 branch 失败")
 
             await self.db.update_game_head_branch(game_id, branch_id)
 
@@ -651,6 +646,27 @@ class AITRPGPlugin(NcatBotPlugin):
             await self._save_cache_to_disk()
             return
 
+    async def _get_custom_input_content(self, group_id: str, message_id: str) -> str:
+        """获取自定义输入消息的内容，优先从缓存读取，否则通过API获取并更新缓存"""
+        group_vote_cache = self.vote_cache.get(group_id, {})
+        item_cache = group_vote_cache.get(message_id, {})
+        content = item_cache.get("content", "")
+
+        if not content:
+            try:
+                msg_event = await self.api.get_msg(message_id)
+                content = "".join(s.text for s in msg_event.message.filter_text())
+                # 更新缓存
+                if message_id in group_vote_cache:
+                    group_vote_cache[message_id]["content"] = content
+                else:
+                    group_vote_cache[message_id] = {"content": content, "votes": {}}
+                await self._save_cache_to_disk()
+            except Exception as e:
+                LOG.warning(f"获取消息 {message_id} 内容失败: {e}")
+                content = f"自定义输入 (ID: {message_id})"
+        return content
+
     async def _tally_votes(
         self, group_id: str, main_message_id: str, candidate_ids_json: str
     ) -> tuple[dict[str, int], list[str]]:
@@ -685,17 +701,8 @@ class AITRPGPlugin(NcatBotPlugin):
             net_score = yay - nay
             scores[cid] = net_score
 
-            content = item_cache.get("content", "")
-            if not content:
-                try:
-                    msg_event = await self.api.get_msg(cid)
-                    content = "".join(s.text for s in msg_event.message.filter_text())
-                    item_cache["content"] = content
-                    await self._save_cache_to_disk()
-                except Exception as e:
-                    LOG.warning(f"获取消息 {cid} 内容失败: {e}")
-
-            display_content = f'"{content}"' if content else f"(ID: {cid})"
+            content = await self._get_custom_input_content(group_id, cid)
+            display_content = f'"{content}"' if "ID:" not in content else content
             result_lines.append(f"- 自定义输入 {display_content}: {net_score} 票")
 
         return scores, result_lines
@@ -775,22 +782,11 @@ class AITRPGPlugin(NcatBotPlugin):
             max_score = max(scores.values())
             winners = [k for k, v in scores.items() if v == max_score]
             winner_lines = []
-            group_vote_cache = self.vote_cache.get(channel_id, {})
             for x in winners:
                 if x in "ABCDEFG":
                     winner_lines.append(f"选择选项 {x}")
                 else:
-                    item_cache = group_vote_cache.get(x, {})
-                    content = item_cache.get("content")
-                    if not content:
-                        try:
-                            msg = await self.api.get_msg(x)
-                            content = "".join(s.text for s in msg.message.filter_text())
-                            item_cache["content"] = content
-                            await self._save_cache_to_disk()
-                        except Exception as e:
-                            LOG.warning(f"获取胜利者消息 {x} 内容失败: {e}")
-                            content = f"自定义输入 (ID: {x})"
+                    content = await self._get_custom_input_content(channel_id, x)
                     winner_lines.append(content)
             winner_content = "\n".join(winner_lines)
 

@@ -24,7 +24,7 @@ class Database:
             await self.conn.execute("PRAGMA wal_autocheckpoint=2000;")
             await self.init_db()
             LOG.info(f"成功连接并初始化数据库: {self.db_path}")
-        except Exception as e:
+        except aiosqlite.Error as e:
             LOG.error(f"数据库连接失败: {e}")
             raise
 
@@ -220,44 +220,50 @@ class Database:
 
     async def create_game(
         self, channel_id: str, user_id: str, system_prompt: str
-    ) -> int | None:
+    ) -> int:
         """创建新游戏并返回 game_id"""
         if not self.conn:
-            return None
+            raise RuntimeError("数据库未连接")
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 "INSERT INTO games (channel_id, host_user_id, system_prompt) VALUES (?, ?, ?)",
                 (channel_id, user_id, system_prompt),
             )
             await self.conn.commit()
+            if cursor.lastrowid is None:
+                raise RuntimeError("插入游戏数据失败")
             return cursor.lastrowid
 
     async def create_round(
         self, game_id: int, parent_id: int, player_choice: str, assistant_response: str
-    ) -> int | None:
+    ) -> int:
         """创建新回合并返回 round_id"""
         if not self.conn:
-            return None
+            raise RuntimeError("数据库未连接")
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 "INSERT INTO rounds (game_id, parent_id, player_choice, assistant_response) VALUES (?, ?, ?, ?)",
                 (game_id, parent_id, player_choice, assistant_response),
             )
             await self.conn.commit()
+            if cursor.lastrowid is None:
+                raise RuntimeError("插入回合数据失败")
             return cursor.lastrowid
 
     async def create_branch(
         self, game_id: int, name: str, tip_round_id: int
-    ) -> int | None:
+    ) -> int:
         """创建新分支并返回 branch_id"""
         if not self.conn:
-            return None
+            raise RuntimeError("数据库未连接")
         async with self.conn.cursor() as cursor:
             await cursor.execute(
                 "INSERT INTO branches (game_id, name, tip_round_id) VALUES (?, ?, ?)",
                 (game_id, name, tip_round_id),
             )
             await self.conn.commit()
+            if cursor.lastrowid is None:
+                raise RuntimeError("插入分支数据失败")
             return cursor.lastrowid
 
     async def update_game_head_branch(self, game_id: int, branch_id: int):
