@@ -106,7 +106,8 @@ class AITRPGPlugin(NcatBotPlugin):
         if self.db:
             await self.db.close()
         if self.renderer:
-            await self.renderer.close()
+            # await self.renderer.close()
+            pass # 因为 MarkdownRenderer 目前没有异步关闭操作，会报错
         LOG.info(f"[{self.name}] 已卸载。")
 
     @filter_registry.group_filter
