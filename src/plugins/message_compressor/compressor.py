@@ -96,6 +96,9 @@ class MessageCompressorPlugin(NcatBotPlugin):
         """处理消息缓冲和触发压缩"""
         group_id = event.group_id
 
+        if event.message.is_forward_msg():
+            return
+
         # 过滤掉机器人自身的消息或@机器人的消息
         if event.user_id == self.bot_id or f"[CQ:at,qq={self.bot_id}]" in event.raw_message:
             return
