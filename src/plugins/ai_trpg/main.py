@@ -1,7 +1,7 @@
 from ncatbot.plugin_system import NcatBotPlugin, command_registry, on_notice, filter_registry
 from typing import cast, TypedDict, Literal
 from ncatbot.core.event import GroupMessageEvent, NoticeEvent
-from ncatbot.core.event.message_segment import File, Reply
+from ncatbot.core.event.message_segment import File, Reply, At
 from ncatbot.utils import get_log
 from pathlib import Path
 import aiohttp
@@ -172,7 +172,9 @@ class AITRPGPlugin(NcatBotPlugin):
                 return # 不是对当前游戏主消息的回复
             
             # 检查event消息中是否有at段，如果没有，则终止
-            if not f"[CQ:at,qq={event.self_id}]" in event.raw_message:
+            at_segments = event.message.filter(At)
+            is_at_self = any(at.qq == str(event.self_id) for at in at_segments)
+            if not is_at_self:
                 return
 
             game_id, candidate_ids_json = game_row

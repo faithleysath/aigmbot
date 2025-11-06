@@ -1,6 +1,6 @@
 from ncatbot.plugin_system import NcatBotPlugin, command_registry, group_filter, on_notice
 from ncatbot.core.event import GroupMessageEvent, NoticeEvent
-from ncatbot.core.event.message_segment import File
+from ncatbot.core.event.message_segment import File, At
 from ncatbot.core.helper.forward_constructor import ForwardConstructor
 from ncatbot.utils import get_log
 from collections import defaultdict
@@ -134,7 +134,9 @@ class MessageCompressorPlugin(NcatBotPlugin):
             if await self._is_bot_admin_in_group(group_id):
                 # 撤回原始消息
                 for msg in messages:
-                    if self._is_group_admin(msg) or msg.user_id == self.bot_id or f"[CQ:at,qq={self.bot_id}]" in msg.raw_message:
+                    at_segments = msg.message.filter(At)
+                    is_at_self = any(at.qq == str(self.bot_id) for at in at_segments)
+                    if self._is_group_admin(msg) or msg.user_id == self.bot_id or is_at_self:
                         continue
                     await asyncio.sleep(0.2) # 短暂延迟以避免过于频繁的 API 调用
                     try:
