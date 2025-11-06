@@ -15,23 +15,31 @@ class LLM_API:
         )
         self.model_name = model_name
 
-    async def get_completion(self, messages: list[ChatCompletionMessageParam]) -> str | None:
+    async def get_completion(self, messages: list[ChatCompletionMessageParam]) -> tuple[str | None, int | None]:
         """
         调用 OpenAI API 获取聊天完成结果。
 
         :param messages: 对话历史列表，格式为 [{"role": "user", "content": "..."}, ...]
-        :return: AI 返回的内容字符串，如果出错则返回 None
+        :return: 一个元组，包含 (AI 返回的内容字符串, 输入的 token 数)，如果出错则返回 (None, None)
         """
         try:
             response = await self.client.chat.completions.create(
                 model=self.model_name,
                 messages=messages,
             )
+            content = None
+            prompt_tokens = None
+
             if response.choices and response.choices[0].message.content:
-                return response.choices[0].message.content
+                content = response.choices[0].message.content
             else:
                 LOG.warning("OpenAI API did not return any choices or content.")
-                return None
+
+            if response.usage and response.usage.prompt_tokens:
+                prompt_tokens = response.usage.prompt_tokens
+            
+            return content, prompt_tokens
+
         except Exception as e:
             LOG.error(f"调用 OpenAI API 时出错: {e}")
             # 在实际应用中，可能需要更复杂的错误处理和重试逻辑
