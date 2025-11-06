@@ -1,5 +1,5 @@
 from ncatbot.plugin_system import NcatBotPlugin, command_registry, on_notice, filter_registry
-from typing import cast, TypedDict, Literal
+from typing import cast, TypedDict, Literal, Any
 from ncatbot.core.event import GroupMessageEvent, NoticeEvent
 from ncatbot.core.event.message_segment import File, Reply, At
 from ncatbot.utils import get_log
@@ -57,7 +57,7 @@ class AITRPGPlugin(NcatBotPlugin):
         self.data_path: Path = Path()
         self.cache_path: Path | None = None
         self.pending_new_games: dict[str, dict] = {}
-        self.vote_cache: dict[str, dict[str, dict[int, set[str]]]] = {}
+        self.vote_cache: dict[str, dict[str, dict[Any, Any]]] = {}
 
     async def _load_cache_from_disk(self):
         """从磁盘加载缓存文件"""
@@ -76,16 +76,16 @@ class AITRPGPlugin(NcatBotPlugin):
 
                 # 恢复 vote_cache，转换 set
                 raw_vote_cache = data.get("vote_cache", {})
-                self.vote_cache = {
-                    group_id: {
-                        msg_id: {
-                            int(emoji_id): set(users)
-                            for emoji_id, users in emojis.items()
-                        }
-                        for msg_id, emojis in messages.items()
-                    }
-                    for group_id, messages in raw_vote_cache.items()
-                }
+                self.vote_cache = {}
+                for group_id, messages in raw_vote_cache.items():
+                    self.vote_cache[group_id] = {}
+                    for msg_id, data in messages.items():
+                        self.vote_cache[group_id][msg_id] = {}
+                        if "content" in data:
+                            self.vote_cache[group_id][msg_id]["content"] = data["content"]
+                        for key, value in data.items():
+                            if key != "content":
+                                self.vote_cache[group_id][msg_id][int(key)] = set(value)
             LOG.info("成功从磁盘加载缓存。")
         except Exception as e:
             LOG.error(f"从磁盘加载缓存失败: {e}", exc_info=True)
@@ -103,17 +103,17 @@ class AITRPGPlugin(NcatBotPlugin):
                 }
                 for key, game in self.pending_new_games.items()
             }
-            serializable_votes = {
-                group_id: {
-                    msg_id: {
-                        emoji_id: list(users)
-                        for emoji_id, users in emojis.items()
-                    }
-                    for msg_id, emojis in messages.items()
-                }
-                for group_id, messages in self.vote_cache.items()
-            }
-            
+            serializable_votes = {}
+            for group_id, messages in self.vote_cache.items():
+                serializable_votes[group_id] = {}
+                for msg_id, data in messages.items():
+                    serializable_votes[group_id][msg_id] = {}
+                    if "content" in data:
+                        serializable_votes[group_id][msg_id]["content"] = data["content"]
+                    for key, value in data.items():
+                        if key != "content":
+                            serializable_votes[group_id][msg_id][key] = list(value)
+
             data = {
                 "pending_new_games": serializable_pending,
                 "vote_cache": serializable_votes,
@@ -256,6 +256,7 @@ class AITRPGPlugin(NcatBotPlugin):
             game_id, candidate_ids_json = game_row
             
             custom_input_message_id = str(event.message_id)
+            custom_input_content = "".join(s.text for s in event.message.filter_text()).strip()
             
             candidate_ids: list = json.loads(candidate_ids_json)
             candidate_ids.append(custom_input_message_id)
@@ -265,6 +266,12 @@ class AITRPGPlugin(NcatBotPlugin):
                 (json.dumps(candidate_ids), game_id)
             )
             await self.db.conn.commit()
+
+            # 将内容添加到缓存
+            group_vote_cache = self.vote_cache.setdefault(group_id, {})
+            message_cache = group_vote_cache.setdefault(custom_input_message_id, {})
+            message_cache["content"] = custom_input_content
+            await self._save_cache_to_disk()
             
             LOG.info(f"游戏 {game_id} 收到新的自定义输入: {custom_input_message_id}")
 
@@ -584,12 +591,22 @@ class AITRPGPlugin(NcatBotPlugin):
             nay = len(input_votes.get(EMOJI["NAY"], set()))
             net_score = yay - nay
             scores[cid] = net_score
-            try:
-                msg_event = await self.api.get_msg(cid)
-                content = "".join(s.text for s in msg_event.message.filter_text())
-                result_lines.append(f'- 自定义输入 "{content}": {net_score} 票')
-            except:
-                result_lines.append(f"- 自定义输入 (ID: {cid}): {net_score} 票")
+
+            content = ""
+            message_cache = group_vote_cache.get(cid, {})
+            if "content" in message_cache:
+                content = message_cache["content"]
+            else:
+                try:
+                    msg_event = await self.api.get_msg(cid)
+                    content = "".join(s.text for s in msg_event.message.filter_text())
+                    message_cache["content"] = content
+                    await self._save_cache_to_disk()
+                except Exception as e:
+                    LOG.warning(f"获取消息 {cid} 内容失败: {e}")
+            
+            display_content = f'"{content}"' if content else f"(ID: {cid})"
+            result_lines.append(f"- 自定义输入 {display_content}: {net_score} 票")
         
         return scores, result_lines
 
@@ -642,12 +659,23 @@ class AITRPGPlugin(NcatBotPlugin):
         max_score = max(scores.values())
         winners = [k for k, v in scores.items() if v == max_score]
         winner_lines = []
+        group_vote_cache = self.vote_cache.get(channel_id, {})
         for x in winners:
             if x in 'ABCDEFG':
                 winner_lines.append(f"选择选项 {x}")
             else:
-                msg = await self.api.get_msg(x)
-                winner_lines.append("".join(s.text for s in msg.message.filter_text()))
+                content = group_vote_cache.get(x, {}).get("content")
+                if not content:
+                    try:
+                        msg = await self.api.get_msg(x)
+                        content = "".join(s.text for s in msg.message.filter_text())
+                        # 回填缓存
+                        group_vote_cache.setdefault(x, {})["content"] = content
+                        await self._save_cache_to_disk()
+                    except Exception as e:
+                        LOG.warning(f"获取胜利者消息 {x} 内容失败: {e}")
+                        content = f"自定义输入 (ID: {x})"
+                winner_lines.append(content)
         winner_content = "\n".join(winner_lines)
 
         # 构建历史 (DB IO)
