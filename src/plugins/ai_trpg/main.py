@@ -54,7 +54,7 @@ class AITRPGPlugin(NcatBotPlugin):
         self.renderer: MarkdownRenderer | None = None
         self.data_path: Path = Path()
         self.pending_new_games: dict[str, dict] = {}
-        self.vote_cache: dict[str, dict[int, set[str]]] = {}
+        self.vote_cache: dict[str, dict[str, dict[int, set[str]]]] = {}
 
     async def on_load(self):
         """插件加载时执行的初始化操作"""
@@ -420,13 +420,6 @@ class AITRPGPlugin(NcatBotPlugin):
         message_id = str(event.message_id)
         emoji_id = int(event.emoji_like_id)
 
-        # 更新投票缓存
-        if event.is_add:
-            self.vote_cache.setdefault(message_id, {}).setdefault(emoji_id, set()).add(user_id)
-        elif message_id in self.vote_cache and emoji_id in self.vote_cache[message_id]:
-            self.vote_cache[message_id][emoji_id].discard(user_id)
-
-        # 先把main_message_id和candidate_custom_input_ids都查出来
         async with self.db.conn.cursor() as cursor:
             await cursor.execute("SELECT game_id, main_message_id, candidate_custom_input_ids FROM games WHERE channel_id = ?", (group_id,))
             game = await cursor.fetchone()
@@ -434,6 +427,18 @@ class AITRPGPlugin(NcatBotPlugin):
                 return
             game_id, main_message_id, candidate_ids_json = game
             candidate_ids: list = json.loads(candidate_ids_json)
+
+        # --- 主动防御：只缓存有效投票 ---
+        if message_id != str(main_message_id) and message_id not in candidate_ids:
+            return # 不是对当前游戏有效消息的回应，直接忽略
+
+        # 更新投票缓存
+        group_vote_cache = self.vote_cache.setdefault(group_id, {})
+        if event.is_add:
+            group_vote_cache.setdefault(message_id, {}).setdefault(emoji_id, set()).add(user_id)
+        elif message_id in group_vote_cache and emoji_id in group_vote_cache[message_id]:
+            group_vote_cache[message_id][emoji_id].discard(user_id)
+
 
         is_admin_or_host = await self._is_group_admin_or_host(group_id, user_id)
 
@@ -444,8 +449,9 @@ class AITRPGPlugin(NcatBotPlugin):
                 await self._tally_and_advance(int(game_id))
                 return
             elif emoji_id == EMOJI["DENY"]:
-                _, result_lines = await self._tally_votes(str(main_message_id), candidate_ids_json)
+                _, result_lines = await self._tally_votes(group_id, str(main_message_id), candidate_ids_json)
                 await self.api.post_group_msg(group_id, text="\n".join(result_lines) + f"\n由于一位管理员/主持人的反对票，本轮投票并未获通过，将重新开始本轮。", reply=message_id)
+                self.vote_cache[group_id] = {} # 清理本轮投票缓存
                 await self.checkout_head(int(game_id))
                 return
             elif emoji_id == EMOJI["RETRACT"]:
@@ -459,20 +465,23 @@ class AITRPGPlugin(NcatBotPlugin):
                 await self.db.conn.commit()
             await self.api.post_group_msg(group_id, text=" 一条自定义输入已被撤回。", reply=message_id)
             # 从缓存中删除
-            self.vote_cache.pop(message_id, None)
+            if group_id in self.vote_cache:
+                self.vote_cache[group_id].pop(message_id, None)
             return
 
 
-    async def _tally_votes(self, main_message_id: str, candidate_ids_json: str) -> tuple[dict[str, int], list[str]]:
+    async def _tally_votes(self, group_id: str, main_message_id: str, candidate_ids_json: str) -> tuple[dict[str, int], list[str]]:
         """计票并返回分数和结果文本"""
         scores: dict[str, int] = {}
         result_lines = ["🗳️ 投票结果统计："]
         
+        group_vote_cache = self.vote_cache.get(group_id, {})
+
         option_emojis = {
             EMOJI["A"]: 'A', EMOJI["B"]: 'B', EMOJI["C"]: 'C', EMOJI["D"]: 'D',
             EMOJI["E"]: 'E', EMOJI["F"]: 'F', EMOJI["G"]: 'G'
         }
-        main_votes = self.vote_cache.get(main_message_id, {})
+        main_votes = group_vote_cache.get(main_message_id, {})
         for emoji, option in option_emojis.items():
             count = len(main_votes.get(emoji, set()))
             if count > 0:
@@ -481,7 +490,7 @@ class AITRPGPlugin(NcatBotPlugin):
 
         candidate_ids = json.loads(candidate_ids_json)
         for cid in candidate_ids:
-            input_votes = self.vote_cache.get(cid, {})
+            input_votes = group_vote_cache.get(cid, {})
             yay = len(input_votes.get(EMOJI["YAY"], set()))
             nay = len(input_votes.get(EMOJI["NAY"], set()))
             net_score = yay - nay
@@ -533,7 +542,7 @@ class AITRPGPlugin(NcatBotPlugin):
             initial_tip_round_id = tip_now_data[0]
 
         # 1. 计票 (网络IO)
-        scores, result_lines = await self._tally_votes(str(main_message_id), candidate_ids_json)
+        scores, result_lines = await self._tally_votes(channel_id, str(main_message_id), candidate_ids_json)
         await self.api.post_group_msg(channel_id, text="\n".join(result_lines), reply=main_message_id)
 
         if not scores:
@@ -585,11 +594,7 @@ class AITRPGPlugin(NcatBotPlugin):
             await self.db.conn.commit()
 
         # 5. 清理缓存
-        self.vote_cache.pop(str(main_message_id), None)
-        candidate_ids = json.loads(candidate_ids_json)
-        for cid in candidate_ids:
-            self.vote_cache.pop(cid, None)
-        
+        self.vote_cache[channel_id] = {}
+
         # 6. 进入下一轮
         await self.checkout_head(game_id)
-        
