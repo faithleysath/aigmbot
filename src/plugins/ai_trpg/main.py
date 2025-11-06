@@ -31,7 +31,7 @@ class AITRPGPlugin(NcatBotPlugin):
         self.llm_api: LLM_API | None = None
         self.renderer: MarkdownRenderer | None = None
         self.data_path: Path = Path()
-        self.pending_new_games: dict[str, dict] = {} # key是message_id，value是{"user_id": str, "system_prompt": str, "file_id": str, create_time: datetime}
+        self.pending_new_games: dict[str, dict] = {} # key是message_id，value是{"user_id": str, "system_prompt": str, "message_id": str, create_time: datetime}
 
     async def on_load(self):
         """插件加载时执行的初始化操作"""
@@ -111,13 +111,12 @@ class AITRPGPlugin(NcatBotPlugin):
                 await self.api.set_msg_emoji_like(reply_message_id, "9749")
             else:
                 await self.api.set_msg_emoji_like(reply_message_id, "127881")
-                self.pending_new_games[reply_message_id] = {
-                    "user_id": event.user_id,
-                    "system_prompt": content,
-                    "file_id": file.file_id,
-                    "create_time": datetime.now(),
-                    "group_id": event.group_id,
-                }
+            self.pending_new_games[reply_message_id] = {
+                "user_id": event.user_id,
+                "system_prompt": content,
+                "message_id": event.message_id,
+                "create_time": datetime.now(),
+            }
         except Exception as e:
             LOG.error(f"处理文件消息时出错: {e}")
             await event.reply("处理文件时出错。", at=False)
@@ -149,9 +148,11 @@ class AITRPGPlugin(NcatBotPlugin):
 
         if event.emoji_like_id == "9749":
             try:
-                await self.api.delete_group_file(pending_game["group_id"], pending_game["file_id"])
-                LOG.info(f"用户 {event.user_id} 取消了游戏 {event.message_id}，文件 {pending_game['file_id']} 已删除。")
+                await self.api.delete_msg(pending_game["message_id"])
+                await self.api.set_msg_emoji_like(event.message_id, "127881", set=False)
+                await self.api.set_msg_emoji_like(event.message_id, "9749")
+                LOG.info(f"用户 {event.user_id} 取消了新游戏创建请求。删除消息 {pending_game['message_id']}")
             except Exception as e:
-                LOG.error(f"删除群文件失败: {e}")
+                LOG.error(f"删除消息失败: {e}")
             finally:
                 del self.pending_new_games[event.message_id]
