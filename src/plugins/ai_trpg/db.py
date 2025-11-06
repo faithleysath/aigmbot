@@ -1,6 +1,7 @@
 import aiosqlite
 from ncatbot.utils import get_log
 from contextlib import asynccontextmanager
+import random
 
 LOG = get_log(__name__)
 
@@ -136,15 +137,29 @@ class Database:
 
     @asynccontextmanager
     async def transaction(self):
+        """Provides a transaction context manager with savepoint support for nesting."""
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        try:
-            await self.conn.execute("BEGIN IMMEDIATE;")
-            yield
-            await self.conn.commit()
-        except Exception:
-            await self.conn.rollback()
-            raise
+
+        if self.conn.in_transaction:
+            # Nested transaction: use savepoints
+            savepoint_name = f"savepoint_{random.randint(0, 10000)}"
+            try:
+                await self.conn.execute(f"SAVEPOINT {savepoint_name};")
+                yield
+                await self.conn.execute(f"RELEASE SAVEPOINT {savepoint_name};")
+            except Exception:
+                await self.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name};")
+                raise
+        else:
+            # Top-level transaction
+            try:
+                await self.conn.execute("BEGIN IMMEDIATE;")
+                yield
+                await self.conn.commit()
+            except Exception:
+                await self.conn.rollback()
+                raise
 
     async def is_game_running(self, channel_id: str) -> bool:
         """检查指定频道当前是否有正在进行的游戏"""

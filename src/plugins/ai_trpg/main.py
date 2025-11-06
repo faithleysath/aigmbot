@@ -742,8 +742,8 @@ class AITRPGPlugin(NcatBotPlugin):
             if not game_data:
                 return
 
-            channel_id = game_data["channel_id"]
-            main_message_id = game_data["main_message_id"]
+            channel_id = str(game_data["channel_id"])
+            main_message_id = str(game_data["main_message_id"] or "")
             candidate_ids_json = game_data["candidate_custom_input_ids"]
             system_prompt = game_data["system_prompt"]
             head_branch_id = game_data["head_branch_id"]

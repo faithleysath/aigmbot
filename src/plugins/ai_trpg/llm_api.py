@@ -2,7 +2,22 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from ncatbot.utils import get_log
 import asyncio, random
-from openai import APIStatusError, RateLimitError, APIConnectionError, APITimeoutError
+try:
+    # 优先使用新版 SDK 的异常路径
+    from openai import (
+        APIStatusError,
+        RateLimitError,
+        APIConnectionError,
+        APITimeoutError,
+    )
+except ImportError:
+    # 兼容旧版 SDK
+    from openai.errors import (  # type: ignore
+        APIStatusError,
+        RateLimitError,
+        APIConnectionError,
+        APITimeoutError,
+    )
 
 LOG = get_log(__name__)
 

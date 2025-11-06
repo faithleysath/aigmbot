@@ -89,15 +89,17 @@ class MarkdownRenderer:
 
             browser = await self._ensure_browser()
             page = await browser.new_page()
-            await page.set_viewport_size({"width": 1000, "height": 10})
-            await page.set_content(html_with_style)
+            try:
+                await page.set_viewport_size({"width": 1000, "height": 100})
+                await page.set_content(html_with_style)
 
-            # 截图 body 元素以获得准确的内容尺寸
-            element = await page.query_selector("body")
-            image_bytes = await (
-                element.screenshot() if element else page.screenshot(full_page=True)
-            )
-            await page.close()
+                # 截图 body 元素以获得准确的内容尺寸
+                element = await page.query_selector("body")
+                image_bytes = await (
+                    element.screenshot() if element else page.screenshot(full_page=True)
+                )
+            finally:
+                await page.close()
 
             LOG.info("Markdown 成功渲染为图片二进制数据。")
             return image_bytes
