@@ -186,7 +186,6 @@ class GameManager:
         channel_id = None
         main_message_id = None
         try:
-            await self.db.set_game_frozen_status(game_id, True)
 
             async with self.db.conn.cursor() as cursor:
                 cursor.row_factory = aiosqlite.Row
@@ -202,6 +201,12 @@ class GameManager:
             system_prompt = game_data["system_prompt"]
             head_branch_id = game_data["head_branch_id"]
 
+            if not scores:
+                await self.api.post_group_msg(channel_id, text="无人投票，请继续投票后再确认。", reply=main_message_id)
+                return
+
+            await self.db.set_game_frozen_status(game_id, True)
+            
             # Get tip_round_id
             async with self.db.conn.cursor() as cursor:
                 await cursor.execute(
@@ -216,10 +221,6 @@ class GameManager:
             await self.api.post_group_msg(
                 channel_id, text="\n".join(result_lines), reply=main_message_id
             )
-
-            if not scores:
-                await self.api.post_group_msg(channel_id, text="无人投票，本轮无效。")
-                return
 
             # 2. 找出胜利者
             max_score = max(scores.values())
