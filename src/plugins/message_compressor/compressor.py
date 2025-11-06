@@ -1,5 +1,6 @@
 from ncatbot.plugin_system import NcatBotPlugin, command_registry, group_filter, on_notice
 from ncatbot.core.event import GroupMessageEvent, NoticeEvent
+from ncatbot.core.event.message_segment import File
 from ncatbot.core.helper.forward_constructor import ForwardConstructor
 from ncatbot.utils import get_log
 from collections import defaultdict
@@ -96,7 +97,7 @@ class MessageCompressorPlugin(NcatBotPlugin):
         """处理消息缓冲和触发压缩"""
         group_id = event.group_id
 
-        if event.message.is_forward_msg():
+        if event.message.is_forward_msg() or event.message.filter(File):
             return
 
         # 过滤掉机器人自身的消息或@机器人的消息
