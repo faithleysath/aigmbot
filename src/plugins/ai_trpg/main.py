@@ -63,37 +63,4 @@ class AITRPGPlugin(NcatBotPlugin):
 
     # --- 核心游戏逻辑 (待实现) ---
 
-    @command_registry.command("trpg start", description="开始一场新的 TRPG 游戏")
-    async def start_game_command(self, event: GroupMessageEvent):
-        """处理 /trpg start 命令，开始新游戏"""
-        # 核心逻辑待实现
-        await event.reply("新游戏功能待实现...")
-
-    @filter_registry.group_filter
-    async def on_group_message(self, event: GroupMessageEvent):
-        """处理群聊消息，用于捕获对游戏主消息的回复"""
-        # 核心逻辑待实现
-        pass
-
-    @on_notice
-    async def handle_emoji_reaction(self, event: NoticeEvent):
-        """处理表情回应，这是游戏结算和状态变更的核心触发器"""
-        # 核心逻辑待实现
-        pass
-
-    # --- 辅助方法 (待实现) ---
-
-    async def _create_new_game(self, group_id: str):
-        """内部方法，处理新游戏的完整启动流程"""
-        # 核心逻辑待实现
-        pass
-
-    async def _advance_story(self, group_id: str, choice: str):
-        """根据玩家的选择推进故事"""
-        # 核心逻辑待实现
-        pass
-
-    async def _handle_admin_action(self, group_id: str, action: str):
-        """处理管理员的确认、否决、回退等操作"""
-        # 核心逻辑待实现
-        pass
+    
