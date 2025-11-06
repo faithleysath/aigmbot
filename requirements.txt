@@ -1,6 +1,7 @@
 ncatbot
 openai
 aiosqlite
+aiofiles
 markdown-it-py
 playwright
 aiohttp

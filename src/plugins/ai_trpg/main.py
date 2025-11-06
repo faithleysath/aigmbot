@@ -7,6 +7,8 @@ from pathlib import Path
 import aiohttp
 import json
 from datetime import datetime, timedelta
+import aiofiles
+import aiofiles.os as aio_os
 
 from .db import Database
 from .llm_api import LLM_API, ChatCompletionMessageParam
@@ -53,8 +55,74 @@ class AITRPGPlugin(NcatBotPlugin):
         self.llm_api: LLM_API | None = None
         self.renderer: MarkdownRenderer | None = None
         self.data_path: Path = Path()
+        self.cache_path: Path | None = None
         self.pending_new_games: dict[str, dict] = {}
         self.vote_cache: dict[str, dict[str, dict[int, set[str]]]] = {}
+
+    async def _load_cache_from_disk(self):
+        """从磁盘加载缓存文件"""
+        if not self.cache_path or not await aio_os.path.exists(self.cache_path):
+            return
+        try:
+            async with aiofiles.open(self.cache_path, "r", encoding="utf-8") as f:
+                content = await f.read()
+                data = json.loads(content)
+                
+                # 恢复 pending_new_games，转换时间字符串
+                self.pending_new_games = data.get("pending_new_games", {})
+                for key, game in self.pending_new_games.items():
+                    if "create_time" in game and isinstance(game["create_time"], str):
+                        game["create_time"] = datetime.fromisoformat(game["create_time"])
+
+                # 恢复 vote_cache，转换 set
+                raw_vote_cache = data.get("vote_cache", {})
+                self.vote_cache = {
+                    group_id: {
+                        msg_id: {
+                            int(emoji_id): set(users)
+                            for emoji_id, users in emojis.items()
+                        }
+                        for msg_id, emojis in messages.items()
+                    }
+                    for group_id, messages in raw_vote_cache.items()
+                }
+            LOG.info("成功从磁盘加载缓存。")
+        except Exception as e:
+            LOG.error(f"从磁盘加载缓存失败: {e}", exc_info=True)
+
+    async def _save_cache_to_disk(self):
+        """将当前缓存保存到磁盘"""
+        if not self.cache_path:
+            return
+        try:
+            # 准备待序列化的数据
+            serializable_pending = {
+                key: {
+                    **game,
+                    "create_time": game["create_time"].isoformat()
+                }
+                for key, game in self.pending_new_games.items()
+            }
+            serializable_votes = {
+                group_id: {
+                    msg_id: {
+                        emoji_id: list(users)
+                        for emoji_id, users in emojis.items()
+                    }
+                    for msg_id, emojis in messages.items()
+                }
+                for group_id, messages in self.vote_cache.items()
+            }
+            
+            data = {
+                "pending_new_games": serializable_pending,
+                "vote_cache": serializable_votes,
+            }
+            
+            async with aiofiles.open(self.cache_path, "w", encoding="utf-8") as f:
+                await f.write(json.dumps(data, indent=4, ensure_ascii=False))
+        except Exception as e:
+            LOG.error(f"保存缓存到磁盘失败: {e}", exc_info=True)
 
     async def on_load(self):
         """插件加载时执行的初始化操作"""
@@ -66,14 +134,20 @@ class AITRPGPlugin(NcatBotPlugin):
         self.register_config("openai_model_name", "gpt-4-turbo")
         LOG.debug(f"[{self.name}] 配置项注册完毕。")
 
-        # 2. 初始化数据库
-        db_path = self.data_path / "data" / "AITRPGPlugin" / "ai_trpg.db"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        # 2. 初始化数据库和缓存路径
+        data_dir = self.data_path / "data" / "AITRPGPlugin"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        db_path = data_dir / "ai_trpg.db"
+        self.cache_path = data_dir / "cache.json"
+        
         self.db = Database(str(db_path))
         await self.db.connect()
         LOG.debug(f"[{self.name}] 数据库连接成功。")
 
-        # 3. 初始化 LLM API
+        # 3. 加载缓存
+        await self._load_cache_from_disk()
+
+        # 4. 初始化 LLM API
         try:
             api_key = self.config.get("openai_api_key", "")
             base_url = self.config.get("openai_base_url", "https://api.openai.com/v1")
@@ -91,6 +165,7 @@ class AITRPGPlugin(NcatBotPlugin):
 
     async def on_close(self):
         """插件关闭时执行的操作"""
+        await self._save_cache_to_disk()
         if self.db:
             await self.db.close()
         if self.renderer:
@@ -150,6 +225,7 @@ class AITRPGPlugin(NcatBotPlugin):
                 "message_id": event.message_id,
                 "create_time": datetime.now(),
             }
+            await self._save_cache_to_disk()
         except Exception as e:
             LOG.error(f"处理文件消息时出错: {e}", exc_info=True)
             await event.reply("处理文件时出错。", at=False)
@@ -222,6 +298,7 @@ class AITRPGPlugin(NcatBotPlugin):
         # 清理过期的请求
         if datetime.now() - pending_game["create_time"] > timedelta(minutes=5):
             del self.pending_new_games[str(event.message_id)]
+            await self._save_cache_to_disk()
             return
 
         # 权限检查：只有发起人可以确认或取消
@@ -242,6 +319,7 @@ class AITRPGPlugin(NcatBotPlugin):
                 LOG.error(f"处理取消新游戏时出错: {e}")
             finally:
                 del self.pending_new_games[message_id]
+                await self._save_cache_to_disk()
 
         elif event.emoji_like_id == str(EMOJI["CONFIRM"]):  # 确认
             if self.db and await self.db.is_game_running(group_id):
@@ -253,6 +331,7 @@ class AITRPGPlugin(NcatBotPlugin):
             await self.api.set_msg_emoji_like(message_id, str(EMOJI["CONFIRM"]))
             await self.api.set_msg_emoji_like(message_id, str(EMOJI["COFFEE"]), set=False)
             del self.pending_new_games[message_id]
+            await self._save_cache_to_disk()
             
             await self.start_new_game(
                 group_id=group_id,
@@ -444,6 +523,7 @@ class AITRPGPlugin(NcatBotPlugin):
             group_vote_cache.setdefault(message_id, {}).setdefault(emoji_id, set()).add(user_id)
         elif message_id in group_vote_cache and emoji_id in group_vote_cache[message_id]:
             group_vote_cache[message_id][emoji_id].discard(user_id)
+        await self._save_cache_to_disk()
 
 
         is_admin_or_host = await self._is_group_admin_or_host(group_id, user_id)
@@ -456,8 +536,9 @@ class AITRPGPlugin(NcatBotPlugin):
                 return
             elif emoji_id == EMOJI["DENY"]:
                 _, result_lines = await self._tally_votes(group_id, str(main_message_id), candidate_ids_json)
-                await self.api.post_group_msg(group_id, text="\n".join(result_lines) + f"\n由于一位管理员/主持人的反对票，本轮投票并未获通过，将重新开始本轮。", reply=message_id)
+                await self.api.post_group_msg(group_id, text="\n".join(result_lines) + f"\n由于一位管理员/主持人的反对票，本轮投票并未获通过，将重新开始本輪。", reply=message_id)
                 self.vote_cache[group_id] = {} # 清理本轮投票缓存
+                await self._save_cache_to_disk()
                 await self.checkout_head(int(game_id))
                 return
             elif emoji_id == EMOJI["RETRACT"]:
@@ -474,6 +555,7 @@ class AITRPGPlugin(NcatBotPlugin):
             # 从缓存中删除
             if group_id in self.vote_cache:
                 self.vote_cache[group_id].pop(message_id, None)
+            await self._save_cache_to_disk()
             return
 
 
@@ -602,6 +684,7 @@ class AITRPGPlugin(NcatBotPlugin):
 
         # 5. 清理缓存
         self.vote_cache[channel_id] = {}
+        await self._save_cache_to_disk()
 
         # 6. 进入下一轮
         await self.checkout_head(game_id)
