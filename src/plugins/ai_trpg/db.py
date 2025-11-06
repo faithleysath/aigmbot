@@ -21,6 +21,7 @@ class Database:
             await self.conn.execute("PRAGMA synchronous=NORMAL;")
             await self.conn.execute("PRAGMA foreign_keys = ON;")
             await self.conn.execute("PRAGMA busy_timeout=3000;")  # 3s
+            await self.conn.execute("PRAGMA wal_autocheckpoint=2000;")
             await self.init_db()
             LOG.info(f"成功连接并初始化数据库: {self.db_path}")
         except Exception as e:
@@ -143,7 +144,7 @@ class Database:
         if not self.conn:
             raise RuntimeError("数据库未连接")
 
-        if self.conn.in_transaction:
+        if getattr(self.conn, "in_transaction", False):
             # Nested transaction: use savepoints
             savepoint_name = f"sp_{next(self._savepoint_counter)}"
             try:
