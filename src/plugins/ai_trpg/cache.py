@@ -37,23 +37,27 @@ class CacheManager:
                     payload = json.loads(content)
 
                 # 恢复 pending_new_games
-                self.pending_new_games = payload.get("pending_new_games", {})
-                for key, game in self.pending_new_games.items():
+                pending_new_games_restored = payload.get("pending_new_games", {})
+                for key, game in pending_new_games_restored.items():
                     if "create_time" in game and isinstance(game["create_time"], str):
                         game["create_time"] = datetime.fromisoformat(game["create_time"])
 
                 # 恢复 vote_cache
                 raw_vote_cache = payload.get("vote_cache", {})
-                self.vote_cache = {}
+                vote_cache_restored = {}
                 for group_id, messages in raw_vote_cache.items():
-                    self.vote_cache[group_id] = {}
+                    vote_cache_restored[group_id] = {}
                     for msg_id, item_payload in messages.items():
                         item: VoteCacheItem = {"votes": {}}
                         if "content" in item_payload and item_payload["content"] is not None:
                             item["content"] = item_payload["content"]
                         if "votes" in item_payload:
                             item["votes"] = {str(k): set(v) for k, v in item_payload["votes"].items()}
-                        self.vote_cache[group_id][msg_id] = item
+                        vote_cache_restored[group_id][msg_id] = item
+                
+                async with self._cache_lock:
+                    self.pending_new_games = pending_new_games_restored
+                    self.vote_cache = vote_cache_restored
                 LOG.info("成功从磁盘加载缓存。")
             except Exception as e:
                 LOG.error(f"从磁盘加载缓存失败: {e}", exc_info=True)

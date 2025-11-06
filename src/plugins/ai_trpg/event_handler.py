@@ -315,9 +315,11 @@ class EventHandler:
             group_id, text=" 一条自定义输入已被撤回。", reply=message_id
         )
         # 从缓存中删除
-        if self.cache_manager and group_id in self.cache_manager.vote_cache:
+        if self.cache_manager:
             async with self.cache_manager._cache_lock:
-                self.cache_manager.vote_cache[group_id].pop(message_id, None)
+                group_map = self.cache_manager.vote_cache.get(group_id)
+                if group_map is not None:
+                    group_map.pop(message_id, None)
             await self.cache_manager.save_to_disk()
 
     async def _handle_game_reaction(self, event: NoticeEvent):

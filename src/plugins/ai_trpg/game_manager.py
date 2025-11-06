@@ -1,5 +1,4 @@
 # src/plugins/ai_trpg/game_manager.py
-import json
 from typing import cast
 import aiosqlite
 
