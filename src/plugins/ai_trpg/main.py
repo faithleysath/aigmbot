@@ -461,7 +461,8 @@ class AITRPGPlugin(NcatBotPlugin):
                 await self.checkout_head(int(game_id))
                 return
             elif emoji_id == EMOJI["RETRACT"]:
-                pass
+                await self._revert_last_round(int(game_id))
+                return
 
         # 处理管理员/主持人撤回自定义输入的行为
         if message_id in candidate_ids and is_admin_or_host and emoji_id == EMOJI["CANCEL"]:
@@ -604,3 +605,51 @@ class AITRPGPlugin(NcatBotPlugin):
 
         # 6. 进入下一轮
         await self.checkout_head(game_id)
+
+    async def _revert_last_round(self, game_id: int):
+        """将游戏回退到上一轮"""
+        if not self.db or not self.db.conn:
+            return
+
+        channel_id = None
+        try:
+            async with self.db.conn.cursor() as cursor:
+                # 1. 获取游戏和 head 分支信息
+                await cursor.execute(
+                    "SELECT g.channel_id, g.head_branch_id, b.tip_round_id FROM games g "
+                    "JOIN branches b ON g.head_branch_id = b.branch_id WHERE g.game_id = ?",
+                    (game_id,)
+                )
+                game_info = await cursor.fetchone()
+                if not game_info:
+                    raise Exception("找不到游戏或其 head 分支。")
+                
+                channel_id, head_branch_id, tip_round_id = game_info
+
+                # 2. 获取当前回合的 parent_id
+                await cursor.execute("SELECT parent_id FROM rounds WHERE round_id = ?", (tip_round_id,))
+                round_info = await cursor.fetchone()
+                if not round_info:
+                    raise Exception("找不到当前回合信息。")
+                
+                parent_id = round_info[0]
+
+                # 3. 检查是否可以回退
+                if parent_id == -1:
+                    await self.api.post_group_msg(str(channel_id), text="已经是第一轮了，无法再回退。")
+                    return
+
+                # 4. 执行回退
+                await cursor.execute("UPDATE branches SET tip_round_id = ? WHERE branch_id = ?", (parent_id, head_branch_id))
+                await self.db.conn.commit()
+            
+            LOG.info(f"游戏 {game_id} 已成功回退到 round {parent_id}。")
+            await self.api.post_group_msg(str(channel_id), text="🔄 游戏已成功回退到上一轮。")
+
+            # 5. 刷新游戏界面
+            await self.checkout_head(game_id)
+
+        except Exception as e:
+            LOG.error(f"回退游戏 (game_id: {game_id}) 时出错: {e}", exc_info=True)
+            if channel_id:
+                await self.api.post_group_msg(str(channel_id), text=f"❌ 回退失败: {e}")
