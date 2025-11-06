@@ -3,3 +3,4 @@ openai
 aiosqlite
 markdown-it-py
 playwright
+aiohttp

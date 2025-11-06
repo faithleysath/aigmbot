@@ -1,5 +1,7 @@
-from ncatbot.plugin_system import NcatBotPlugin, command_registry, admin_group_filter
+import aiohttp
+from ncatbot.plugin_system import NcatBotPlugin, command_registry, admin_group_filter, on_message
 from ncatbot.core.event import GroupMessageEvent
+from ncatbot.core.event.message_segment import File
 from ncatbot.utils import get_log
 
 LOG = get_log("GroupFileManager")
@@ -12,6 +14,37 @@ class GroupFileManagerPlugin(NcatBotPlugin):
 
     async def on_load(self):
         LOG.info(f"插件 {self.name} 加载成功")
+
+    @on_message
+    async def handle_group_file(self, event: GroupMessageEvent):
+        files = event.message.filter(File)
+        if not files:
+            return
+
+        for file in files:
+            file_info = (
+                f"检测到文件：\n"
+                f"文件名: {file.file}\n"
+                f"文件ID: {file.file_id}\n"
+                f"文件大小: {file.file_size} 字节"
+            )
+
+            if file.file.endswith((".txt", ".md")):
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(file.url) as response:
+                            if response.status == 200:
+                                content = await response.text()
+                                preview = content[:100]
+                                file_info += f"\n\n文件预览 (前100字):\n---\n{preview}"
+                            else:
+                                LOG.warning(f"下载文件预览失败，状态码: {response.status}")
+                                file_info += "\n\n无法获取文件预览。"
+                except Exception as e:
+                    LOG.error(f"下载或读取文件预览时出错: {e}")
+                    file_info += "\n\n无法获取文件预览。"
+
+            await event.reply(file_info)
 
     @admin_group_filter
     @command_registry.command("delete_root_files", description="删除群文件根目录下的所有文件")
