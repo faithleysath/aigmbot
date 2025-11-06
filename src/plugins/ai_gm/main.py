@@ -42,13 +42,13 @@ class AIGMPlugin(NcatBotPlugin):
         self.register_config("openai_api_key", "YOUR_API_KEY_HERE")
         self.register_config("openai_base_url", "https://api.openai.com/v1")
         self.register_config("openai_model_name", "gpt-4-turbo")
-        self.register_config("pending_game_timeout", 5, "新游戏等待确认的超时时间（分钟）")
+        self.register_config("pending_game_timeout", 300, "新游戏等待确认的超时时间（秒）")
         LOG.debug(f"[{self.name}] 配置项注册完毕。")
 
         # 2. 初始化路径和数据库
         data_dir = self.data_path / "data" / "AIGMPlugin"
         data_dir.mkdir(parents=True, exist_ok=True)
-        db_path = data_dir / "ai_trpg.db"
+        db_path = data_dir / "ai_gm.db"
         cache_path = data_dir / "cache.json"
 
         self.db = Database(str(db_path))
