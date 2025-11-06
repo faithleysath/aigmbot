@@ -40,9 +40,10 @@ class Database:
                     game_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     channel_id TEXT UNIQUE,
                     main_message_id TEXT,
-                    candidate_custom_inputs TEXT,
+                    candidate_custom_input_ids TEXT,
                     head_branch_id INTEGER,
                     system_prompt TEXT,
+                    host_user_id TEXT,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (head_branch_id) REFERENCES branches (branch_id) ON DELETE SET NULL
