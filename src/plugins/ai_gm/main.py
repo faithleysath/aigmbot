@@ -128,8 +128,8 @@ class AIGMPlugin(NcatBotPlugin):
         if self.event_handler:
             await self.event_handler.handle_emoji_reaction(event)
 
-    async def _is_authorized(self, event: GroupMessageEvent) -> bool:
-        """检查用户是否有权执行写操作"""
+    async def _is_authorized_for_channel_action(self, event: GroupMessageEvent) -> bool:
+        """检查用户是否有权对当前频道内的游戏执行写操作"""
         user_id = str(event.user_id)
         group_id = str(event.group_id)
 
@@ -141,7 +141,7 @@ class AIGMPlugin(NcatBotPlugin):
         if event.sender.role in ["admin", "owner"]:
             return True
 
-        # 游戏主持人
+        # 游戏主持人 (当前频道游戏的)
         if self.db:
             game = await self.db.get_game_by_channel_id(group_id)
             if game and str(game["host_user_id"]) == user_id:
@@ -151,7 +151,7 @@ class AIGMPlugin(NcatBotPlugin):
 
     @command_registry.command("aigm")
     async def aigm_command(self, event: GroupMessageEvent, *args: str):
-        if not self.command_handler:
+        if not self.command_handler or not self.db:
             return
 
         if not args:
@@ -166,17 +166,28 @@ class AIGMPlugin(NcatBotPlugin):
             if game_sub_command == "list":
                 await self.command_handler.handle_game_list(event)
             elif game_sub_command == "attach" and len(args) > 2:
-                if await self._is_authorized(event):
-                    await self.command_handler.handle_game_attach(event, args[2])
-                else:
-                    await event.reply("权限不足。")
+                # Attach has special permission logic: must be host of the TARGET game
+                try:
+                    game_id_to_attach = int(args[2])
+                    target_game = await self.db.get_game_by_game_id(game_id_to_attach)
+
+                    is_root = self.rbac_manager.user_has_role(str(event.user_id), "root")
+                    is_group_admin = event.sender.role in ["admin", "owner"]
+                    is_target_game_host = target_game and str(target_game["host_user_id"]) == str(event.user_id)
+
+                    if is_root or is_group_admin or is_target_game_host:
+                        await self.command_handler.handle_game_attach(event, args[2])
+                    else:
+                        await event.reply("权限不足。您必须是群管理员、root用户或该游戏的主持人。")
+                except ValueError:
+                    await event.reply("无效的游戏ID，请输入一个数字。")
             elif game_sub_command == "detach":
-                if await self._is_authorized(event):
+                if await self._is_authorized_for_channel_action(event):
                     await self.command_handler.handle_game_detach(event)
                 else:
                     await event.reply("权限不足。")
         elif sub_command == "checkout" and len(args) > 1 and args[1] == "head":
-            if await self._is_authorized(event):
+            if await self._is_authorized_for_channel_action(event):
                 await self.command_handler.handle_checkout_head(event)
             else:
                 await event.reply("权限不足。")
