@@ -203,10 +203,12 @@ class MessageCompressorPlugin(NcatBotPlugin):
             if action in ["enable", "on"]:
                 self.config["group_settings"].setdefault(group_id, {})["enabled"] = True
                 await event.reply("✅ 在本群已启用自动打包压缩功能。")
+                return
             
             elif action in ["disable", "off"]:
                 self.config["group_settings"].setdefault(group_id, {})["enabled"] = False
                 await event.reply("❌ 在本群已禁用自动打包压缩功能。")
+                return
 
             elif action == "threshold":
                 if not val1 or not val2:
@@ -240,6 +242,8 @@ class MessageCompressorPlugin(NcatBotPlugin):
                     )
                 except (ValueError, TypeError):
                     await event.reply("❌ 参数错误，请提供两个有效的数字作为阈值。\n用法: /compressor threshold <消息数> <转发数>")
+                finally:
+                    return
 
         elif action == "status":
             settings = self.config["group_settings"].get(group_id, {})
@@ -273,9 +277,9 @@ class MessageCompressorPlugin(NcatBotPlugin):
                 status_text += "\n提示: 阈值后面带有 '(全局)' 字样表示当前使用的是默认配置。"
 
             await event.reply(status_text)
+            return
         
-        else:
-            await event.reply(
-                "用法: /compressor <action>\n"
-                "action 可为: enable, disable, threshold, status"
-            )
+        await event.reply(
+            "用法: /compressor <action>\n"
+            "action 可为: enable, disable, threshold, status"
+        )
