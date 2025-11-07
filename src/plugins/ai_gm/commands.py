@@ -139,6 +139,10 @@ class CommandHandler:
 
         except ValueError:
             await event.reply("无效的游戏ID，请输入一个数字。")
+        except Exception as e:
+            # 兜底处理 UNIQUE 约束错误或其他 DB 写入错误
+            LOG.error(f"附加游戏失败: {e}", exc_info=True)
+            await event.reply("附加失败：可能已被其他并发操作占用本频道，请稍后重试。")
 
     async def handle_game_set_host(self, event: GroupMessageEvent, args: tuple[str, ...]):
         """处理 /aigm game sethost [id] @user 命令"""
