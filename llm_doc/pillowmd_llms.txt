@@ -1,0 +1,661 @@
+
+CustomMarkdownImage Documentation Summary
+========================================
+
+**Project introduction**
+
+CustomMarkdownImage (also called `pillowmd`) is a Python library built on the
+Pillow image processing toolkit that converts Markdown documents into
+well‑designed images.  Its goal is to allow the creation of documentation,
+social‑media posts and presentation slides without relying on a browser.  The
+library features a modular architecture consisting of a rendering engine, a
+style management system and an extension framework.  Markdown is parsed into an
+intermediate representation, styled through a flexible `MdStyle` configuration
+system and then rendered as a static image or animated GIF.  Advanced features
+include LaTeX rendering via `pillowlatex`, custom elements (progress bars,
+balance bars, charts and cards), gradient coloring, automatic pagination,
+async image downloading and a plug‑in system for adding new decorative
+components.
+
+
+Get Started
+-----------
+
+### Overview
+
+The **Overview** page introduces the project and describes the high‑level
+architecture.  A central `MdToImage` function orchestrates rendering by
+reading Markdown text, applying style configurations, parsing LaTeX and custom
+objects, loading remote images, computing layouts and generating one or more
+frames.  Core components include:
+
+* **Markdown parser** – a state machine that handles text, code blocks, lists,
+  tables, links, quotes and LaTeX.  It supports extended syntax such as
+  `<color=...>text</color>` for coloring spans, `!sgm[...]` for quick images,
+  and `!sgexter[...]` for custom objects.
+* **Analyzer & layout engine** – calculates line breaks, element spacing and
+  table column widths based on style settings and font metrics.  It supports
+  multi‑level lists, nested quotes and automatic page splitting for long
+  documents.
+* **MdStyle configuration** – a data class with over 50 parameters controlling
+  layout (margins, maximum line width, spacing), typography (font sizes,
+  fonts, y‑axis corrections, expression scaling), colors (text gradients,
+  link color, underpainting colors) and backgrounds/decoration.
+* **Rendering engine** – draws text, images, tables and custom objects using
+  an enhanced `ImageDrawPro` class that adds bold, underline and strike
+  effects, automatic font switching and color locking.  It supports static
+  images and GIF animation with configurable frame durations.
+* **LaTeX integration** – optional rendering of mathematical expressions
+  through `pillowlatex`.  Inline (`$...$`) and display (`$$...$$`) formulas
+  are detected and rendered consistently with surrounding text.
+* **Extensions & custom elements** – the `@NewMdExterImageDrawer` decorator
+  registers new drawing functions.  Built‑in extensions include a progress
+  bar, a balance bar showing two values, bar chart bars and a card element
+  with icon and text.
+
+Key features summarised on the page include support for all common Markdown
+constructs (headers, bold/italic/strike, links, lists, quotes, tables, code
+blocks and LaTeX), gradient coloring of text and headings, customizable
+numbering and bullet colors for lists, highlighting of code backgrounds, and a
+style customization system.  Prebuilt themes demonstrate the possibilities:
+
+* **Summer Surf** – vibrant pink and coral tones with energetic backgrounds;
+* **Simple Beige** – minimalist beige palette suited to reports;
+* **Unicorn GIF** – colourful animated background with twelve GIF frames;
+* **Classic** – monochrome style reminiscent of traditional documentation.
+
+The overview also shows code snippets for rendering with the default style,
+loading pre‑built styles (e.g. `style="summer-surf"`), loading custom styles
+from a directory, and using asynchronous rendering for remote images.  It
+notes that the renderer does not rely on a browser and supports both
+synchronous (`Render`) and asynchronous (`AioRender`) APIs.
+
+### Quick Start
+
+The **Quick Start** page helps users begin using the library.  After
+installation with `pip install pillowmd`, import the package (`import
+pillowmd`) and call `MdToImage.Render(text, style)` to render Markdown into an
+image.  To use a pre‑built style, set `style="summer-surf"` or any other
+available name; you can list styles with `ListMarkdownStyles()`.  Custom
+styles can be loaded by passing a path to the style directory.
+
+A table summarises supported Markdown elements and additional features:
+
+| Element               | Syntax/Support                                     |
+|----------------------|-----------------------------------------------------|
+| Headings             | `#` through `######`                               |
+| Bold/Italic/Strike    | `**bold**`, `*italic*`, `~~strike~~`               |
+| Links                 | `[text](url)` with optional display control        |
+| Lists                 | Unordered (`-` or `*`) and ordered lists           |
+| Tables                | Pipe‑delimited tables with header and rows         |
+| Code blocks          | Triple backticks with syntax highlighting          |
+| Blockquotes          | `>` and nested `>>`                                |
+| LaTeX expressions     | `$...$` inline and `$$...$$` display modes         |
+| Custom elements       | Progress bars, balance bars, bar charts, cards     |
+| Quick images          | `!sgm[imagename|scale]` loads images from style    |
+| Color control         | `<color=#FF0000>red text</color>`                  |
+
+The page describes configuration options in the `Render` function: `useImageUrl`
+(for downloading remote images), `imageUrlGetTimeout` (timeout for HTTP
+requests), `autoPage` (automatic multi‑page splitting), and `debug` (overlay
+coordinate aids).  It also explains asynchronous rendering using
+`MdToImage.AioRender`, which fetches remote images concurrently and returns an
+`MdRenderResult` containing one or more images.
+
+Tables on the page list the pre‑built style names with example usage codes and
+describe configuration parameters of `MdStyle` (see MdStyle configuration
+system below).  The quick reference at the end summarises the code patterns
+for default rendering, pre‑built styles, custom styles and async rendering.
+
+### Installation and Basic Usage
+
+The **Installation and Basic Usage** page provides system requirements and
+installation instructions: the library targets Python 3.10 + on Windows,
+macOS and Linux, and depends on `Pillow`, `pillowlatex` (LaTeX engine),
+`fonttools` (font processing) and `httpx` (async HTTP).  Users install via
+`pip install pillowmd` and optionally use `latexmk`/`ctex` for LaTeX support.
+
+It repeats the quick start example: call `MdToImage.Render("# Hello", style)
+` or `MdToImage.Render(text, style="summer-surf")`, and describes how to
+create a custom style directory with configuration files.  It details
+rendering parameters: `text` (Markdown string), `title` (optional title for
+first page), `useImageUrl`, `imageUrlGetTimeout`, `page` (page index to
+render when multi‑page), `autoPage` (split into separate images automatically),
+`debug` (overlay debug information), `logo` (for footers), `cover_image`
+(custom cover).  The asynchronous `AioRender` method has the same parameters
+and returns an awaitable result.
+
+This page also includes a project architecture diagram (similar to the
+Overview) and explains the structure of a custom style directory: it should
+contain `setting.json` or `setting.yml` for style parameters, `elements.json`
+or `elements.yml` for background and decoration definitions, a `fonts` folder
+with font files, an `imgs` folder with image resources, an optional
+`style.py` for custom backgrounds, and a `cover.png` preview.
+
+### Available Markdown Elements
+
+This page provides detailed documentation of supported Markdown elements and
+extensions:
+
+* **Text formatting** – Bold (`**text**`), italic (`*text*`),
+  strikethrough (`~~text~~`), and inline code (`\`code\``) with a coloured
+  code background.
+* **Headings** – Levels 1–6 are supported; font sizes and colours are
+  configurable in the style.
+* **Links** – ` [text](url)` with optional ` [display](url)` notation
+  controlling whether the URL is shown; link colour is configurable.
+* **Lists** – Unordered lists (`-` or `*`) and ordered lists (`1.`, `2.`);
+  bullet colours and numbering styles are customisable in `MdStyle`.
+* **Blockquotes** – One or more `>` characters create nested quotes; each
+  level uses distinct background colours and a left bar.
+* **Tables** – Use pipes to separate cells and hyphens under the header; the
+  table engine optimizes column widths, wraps cell content and draws custom
+  borders and alternating row colours.
+* **Code blocks** – Triple backticks with an optional language specifier.
+  The renderer automatically detects the language for syntax highlighting and
+  draws a background panel with configurable padding.
+* **LaTeX expressions** – See the LaTeX Integration section below.
+* **Color control** – Use `<color=#RRGGBB>...</color>` to colour any span.
+  Colors can be hex codes or variables defined in the style.
+* **Custom objects** – `!sgexter[type;params]` inserts built‑in custom
+  elements.  Types include:
+  * **Progress bar** – Draws a bar representing a percentage; parameters
+    specify current value, maximum value, colors and label.
+  * **Balance bar** – Splits a bar into two segments; parameters set two
+    numeric values and colours.
+  * **Bar chart** – Draws a horizontal or vertical bar chart; parameters
+    define values and colours.
+  * **Card** – Displays an icon, title and description in a coloured box.
+* **Quick images** – `!sgm[name|scale]` loads an image named `name` from
+  the style’s `imgs` folder, optionally scaled by the factor `scale`.
+
+At the end of this page, the documentation explains how element styling is
+determined by the `MdStyle` configuration: each element inherits global style
+settings (font, colour, spacing) and may override specific fields.
+
+### Pre‑built Styles Overview
+
+The style gallery presents several ready‑to‑use themes.  Each style is stored
+in its own directory with configuration files and assets.  The page describes
+four built‑in themes:
+
+| Style | Key characteristics | Configuration highlights |
+|------|---------------------|-------------------------|
+| **Summer Surf (夏日况浪)** | Vibrant, warm palette of pink and coral, dynamic nine‑panel background, surfer motif. | Title fonts at 70/55/40 px, coral page dots, generous margins, decorative sea elements. |
+| **Simple Beige (朴粮米黄)** | Minimalist beige tones, high readability for reports, simple single image background. | Soft code block backgrounds, green code text, heading colours tuned for harmony. |
+| **Unicorn GIF** | Playful rainbow palette with 13‑frame GIF background, multi‑layered decorations. | Animated backgrounds and decorative particles, dynamic progress bars and charts. |
+| **Classic (经典)** | Traditional monochrome scheme reminiscent of academic papers, black text on white background with blue links. | Clean table borders, minimalist layout, small decorative accents. |
+
+The page explains the internal structure of a style configuration: `setting.json`
+controls typography (font sizes, title sizes, expression scaling, code font
+sizes), layout (margins `ld`, `rd`, `ud`, `dd`, maximum line width `xSizeMax`,
+line spacing parameters), fonts (primary, secondary, expression, code), and
+colour scheme (text gradient endpoints, link colour, remark colour,
+underpainting colours).  `elements.json` defines backgrounds and decorative
+objects: mode 0 uses a single image; mode 1 uses nine images for corners,
+edges and center, enabling 9‑patch scaling; elements may also include top
+and bottom decorations with scaling factors and placement rules.  GIF
+animations are supported by specifying `page`, `duration` and
+`playbackSequence` arrays.
+
+A **Style Selection Guide** suggests when to use each pre‑built style
+(e.g. technical documentation suits Classic; creative presentations suit
+Summer Surf).  The page emphasises that users can copy an existing style and
+modify the configuration to create new variants.
+
+
+Deep Dive
+---------
+
+### Core Architecture
+
+This page details the design of the rendering engine and supporting systems.
+The engine is modular, consisting of the following layers:
+
+1. **Input processing** – `MdToImage` accepts a Markdown string or file,
+   optional title, images to embed, and configuration flags.  It can run
+   synchronously or asynchronously.
+2. **Markdown parsing** – A single‑pass state machine scans characters and
+   toggles between modes: LaTeX mode (`bMode`), inline code mode (`bMode2`),
+   code block mode (`codeMode`), link mode (`linkMode`), quote mode
+   (`yMode`) and normal text mode (`textMode`).
+3. **Analysis & layout calculation** – Maintains cursors `nx` and `ny` for
+   the current position, calculates widths and heights using font metrics,
+   wraps text, computes indentation for lists, and determines table column
+   sizes.  It stores intermediate results for each element.
+4. **Font management** – The `MixFont` class wraps multiple fonts into one
+   object.  It searches for characters in the primary font; if missing, it
+   falls back to secondary fonts or a default system font.  Y‑axis
+   corrections align fonts vertically.  Font instances and size metrics are
+   cached for performance.
+5. **Enhanced drawing** – `ImageDrawPro` extends Pillow’s drawing API with
+   bold mode (drawing text twice with slight offset), underline and strike
+   line rendering, colour locking (ensures that coloured spans are not
+   inadvertently re‑colored), and automatic font switching.
+6. **Decoration system** – `MDDecorates` manages background images and
+   decorative elements.  Backgrounds support single image, nine‑patch and
+   scaled patterns with caching and GIF support.  Decorations can be added to
+   the top or bottom layer relative to the text area.  Custom background
+   functions can be written in `style.py` to generate procedural patterns.
+7. **Extension framework** – Decorated functions marked with
+   `@NewMdExterImageDrawer` register custom objects.  The built‑in progress
+   bar, balance bar, bar chart and card are implemented via this mechanism.
+
+The page lists the categories of parameters in `MdStyle`: typography, layout
+and spacing, colour system, background & decorations, and advanced settings
+(e.g. GIF frame durations).  It also discusses global configuration via
+`setting.py`, which defines default paths and values for fonts, images and
+styles.  Performance considerations include font caching (minimising
+filesystem reads), image caching, async support for remote resources, and
+optimised drawing algorithms.
+
+### MdStyle Configuration System
+
+This page explains how styles are defined through configuration files or
+through Python code.  A style package consists of `setting.json` (or YAML)
+and `elements.json` (or YAML) plus optional Python modules and resources.  The
+`MdStyle` dataclass contains parameters grouped into the following areas:
+
+* **Typography** – `fontSize` for body text, `titleSize`, `title2Size`
+  and `title3Size` for headings, `expressionSizeRate` scaling for LaTeX,
+  `codeFontSize` for code blocks, `remarkFontSize` for footnotes, `font`
+  specifying the primary font file, `font2` for the secondary font,
+  `expressionFont`, `codeFont`, and arrays of backup fonts.
+* **Layout & spacing** – Margins (`ld`, `rd`, `ud`, `dd`), maximum line
+  width (`xSizeMax`), line spacing parameters (`dh`, `dw`, `ySpace`,
+  `hhSpace`), list indentations (`nd`, `mnd`), blockquote spacing and
+  padding (`ySpace1`, `nDd1`, `nDd2`), code block padding and corner
+  radius.
+* **Colour system** – Text colours defined as arrays of RGB values for
+  gradient interpolation, link colour, remark colour, code block text colour,
+  underpainting colours for highlights, list bullet colours, blockquote
+  backgrounds and border colours.  Colour values can be hex codes or
+  references to variables.
+* **Background & decorations** – Global background mode (single image or
+  nine‑patch), multiple backgrounds for different pages, decorative
+  elements with fields `page`, `lay` (0 for bottom, 1 for top), `imgName`,
+  `xScale`, `yScale`, `xAlign`, `yAlign`, `xFix`, `yFix` and `lockX`,
+  `lockY` to control movement on multi‑page renders.  GIF animation is
+  enabled by specifying `duration` and `playbackSequence` arrays.
+
+The configuration system automatically converts simple arrays to PIL images or
+RGB tuples and validates the existence of fonts and images.  When
+`LoadMarkdownStyles()` loads a style, it detects whether files are JSON or
+YAML, merges defaults with user settings, converts colours to appropriate
+objects, loads custom background functions from `style.py`, and creates an
+`MdStyle` instance.  Users can override specific values at runtime by
+modifying the dataclass after loading.
+
+
+### Rendering Engine
+
+The rendering engine section contains several subpages:
+
+#### Custom Markdown Parser
+
+The parser processes Markdown text into an intermediate representation.  It is
+implemented as a single‑pass state machine with modes for LaTeX blocks
+(`bMode`), inline LaTeX (`bMode2`), code blocks (`codeMode`), links
+(`linkMode`), blockquotes (`yMode`) and normal text (`textMode`).  As it
+scans characters, it builds tokens for plain text, headings, lists, tables,
+links, images, code and custom objects.  For each element it records style
+information (font, colour, indent), computes sizes, and stores positions for
+subsequent rendering.
+
+The parser supports extended syntax such as:
+
+* `<color=#FF0000>text</color>` – sets the current text colour to red;
+* `!sgm[name|scale]` – inserts an image from the style’s `imgs` directory;
+* `!sgexter[type;params]` – draws a custom object using registered
+  functions; for example, `!sgexter[progress:0.7]` draws a 70 % progress bar.
+
+Tables are parsed by splitting rows on pipes and computing the maximum width
+for each column.  LaTeX expressions are detected by `$` or `$$` delimiters
+and passed to the LaTeX engine; the parser ensures proper switching between
+text and LaTeX contexts.
+
+Performance is improved by caching fonts and sizes, using asynchronous image
+downloading for remote images, and skipping unnecessary work when possible.
+
+#### Image Generation Pipeline
+
+This page explains how the engine converts parsed tokens into images.  The
+pipeline consists of the following stages:
+
+1. **Input parameter processing** – Extract fonts, colours, page size and
+   margins from `MdStyle` and prepare variables for the render.
+2. **Text parsing** – The parser described above produces a list of tokens
+   representing text segments, images, tables, code blocks, LaTeX objects and
+   custom elements.
+3. **Layout calculation** – Computes the width and height of each token using
+   font metrics and spacing settings.  The engine maintains cursors `nx` and
+   `ny`, tracking the current position.  When `nx` exceeds `xSizeMax` or an
+   element does not fit, it wraps to a new line or page.  Tables get a
+   dedicated layout engine that optimizes column widths and row heights to fit
+   the available width.
+4. **Specialized element processors** – Handles LaTeX (using pillowlatex),
+   quick images (loading from local or remote sources), custom objects
+   (progress bars, etc.), and code blocks (drawing backgrounds and syntax
+   highlighting).  Images can come from three sources: (a) local files in the
+   style’s `imgs` folder via `!sgm`, (b) remote URLs via `useImageUrl` and
+   `httpx`, or (c) programmatically generated images via custom extensions.
+5. **Rendering modes** – The engine supports static images and animated GIFs.
+   When backgrounds or decorations have multiple frames, it produces one
+   image per frame and assigns durations.  Frame sequences are defined in
+   `elements.json` using `page` lists and `duration` arrays.
+6. **Async processing** – When using `AioRender`, downloading remote images
+   and rendering LaTeX expressions occur concurrently while text parsing
+   continues.  This improves throughput for documents with many external
+   resources.
+7. **Output generation** – The result is an `MdRenderResult` object with
+   attributes `image` (the first page), `imageType` (PNG or GIF), `imageList`
+   (list of frames for GIFs) and `gifDuration` (frame duration).  Methods
+   allow saving the image to disk or returning the PIL Image object.
+
+This page emphasises the integration between the pipeline and the style
+system: fonts, colours, spacing and decorations come from `MdStyle`, while
+custom elements and backgrounds are provided by `style.py` or
+`elements.json`.
+
+#### Font Management and Text Rendering
+
+This subpage delves into the font system and drawing engine:
+
+* **MixFont implementation** – A `MixFont` object encapsulates one primary
+  font and multiple fallback fonts.  When drawing a character, it checks the
+  glyph availability in the primary font; if absent, it searches fallback
+  fonts in order.  Characters can be assigned to different fonts within the
+  same string.  A dictionary caches rendered fonts by `(font file,
+  size)` to reduce loading overhead.  LaTeX fonts are converted from
+  `MixFont` via `MixFontToLatexFont` for pillowlatex.
+* **Global and style‑specific caches** – A `fontCache` dictionary stores
+  loaded fonts globally.  Each style also caches fonts for its own sizes and
+  families.  Expression fonts used for LaTeX are cached separately to avoid
+  repeated conversions.
+* **ImageDrawPro** – Extends PIL’s `ImageDraw` to support bold (drawing text
+  twice with offsets), underline and strikethrough lines, automatic font
+  switching within a single draw call, y‑axis correction (aligning fonts of
+  different heights), and colour locking (ensuring nested colour spans
+  maintain the correct colours when drawn).  It provides a uniform API for
+  drawing all text and shape elements.
+* **Font configuration system** – Fonts for body text, headings, expressions
+  and code blocks are defined in `MdStyle`, including multiple fallback
+  fonts.  Sizes for different heading levels and expressions are derived
+  relative to the base font size; an `expressionSizeRate` multiplies the base
+  size for LaTeX.
+* **Advanced features** – Per‑font y‑axis correction ensures consistent
+  vertical alignment; secondary fonts supply missing glyphs for languages or
+  emojis; caching strategies reduce memory usage; fonts can be loaded from
+  the style directory or from default resources in the library.  When
+  rendering LaTeX, fonts are converted to pillowlatex format to reuse the
+  same typography.  Performance considerations include lazy loading,
+  memory‑aware caching and cleaning caches when done.
+
+### Style Customization
+
+This section contains several pages explaining how to create custom styles.
+
+#### Creating Custom Styles
+
+To build a new style, create a directory under `styles/your_style` with the
+following contents:
+
+* `setting.json` or `setting.yml` – defines typography, layout, fonts and
+  colours.  Key fields include:
+  * `name`, `intr` (introduction), `author`, `version` and optional `cost`.
+  * **Typography** – `fontSize`, `titleSize`, `title2Size`, `title3Size`,
+    `expressionSizeRate`, `codeFontSize`, `remarkFontSize`, specifying the
+    pixel sizes for body, headings, LaTeX and code.
+  * **Layout & spacing** – Margins `ld`, `rd`, `ud`, `dd`, maximum width
+    `xSizeMax`, horizontal spacing `dw`, vertical spacing `dh`, list
+    indentation `nd`, blockquote spacing `ySpace1`/`ySpace2`, code block
+    padding `codePadding` and corner radius `codeRadius`.
+  * **Fonts** – `font` (primary), `font2` (secondary), `expressionFont`,
+    `codeFont`, each pointing to a TTF/OTF file in the style’s `fonts`
+    folder.  The system automatically loads fallback fonts from the
+    `fonts` folder if the primary font lacks glyphs.
+  * **Colours** – `textColor` (array of RGB values for gradients), `linkColor`,
+    `remarkColor`, `codeColor`, `underpaintingColor` (list of colours for
+    highlights), `listColor` (array for nested list markers), `yBgColor` and
+    `codeBgColor` for blockquotes and code backgrounds.
+* `elements.json` or `elements.yml` – defines backgrounds and decorative
+  elements:
+  * **Mode 0 backgrounds** – A single image file used as the page
+    background.  Fields include `imgName` (file in `imgs`), optional
+    `xScale`/`yScale` for scaling and `align` values (`center`, `left`, etc.).
+  * **Mode 1 backgrounds** – Nine‑patch backgrounds using nine images:
+    `uu`, `dd`, `ll`, `rr` for edges; `mm` for the middle; `ul`, `ur`,
+    `dl`, `dr` for corners.  Scaling directions (`xScale`, `yScale`) and
+    fixed offsets (`xFix`, `yFix`) control how patterns repeat.
+  * **Decorations** – Each decoration entry includes `page` (list of page
+    indices where it appears), `lay` (0 for bottom layer, 1 for top layer),
+    `imgName`, `xScale`, `yScale`, `xAlign`, `yAlign`, `xFix`, `yFix`, and
+    booleans `lockX`/`lockY` controlling whether the element moves with
+    content or stays anchored.
+  * **GIF animations** – Provide lists `page` and `duration` for each
+    background frame; `playbackSequence` controls frame ordering.
+* `cover.png` – Preview image for style gallery.
+* `fonts/` – Directory containing TTF/OTF files used by the style.
+* `imgs/` – Images referenced by backgrounds and decorations.
+* Optional `style.py` – Python functions implementing custom backgrounds;
+  functions decorated with `@NewBgDrawer` or `@NewDecorationDrawer` are
+  automatically loaded.
+
+The page suggests best practices: organise resources with meaningful names,
+start by copying an existing style and modifying gradually, compress images
+appropriately, document changes in comments, and include fallback fonts for
+rare characters.  Use `LoadMarkdownStyles()` to load styles and verify that
+settings are applied correctly.
+
+#### Element Configuration
+
+Although not fully reproduced here, the **Element Configuration** page
+(documented in the `docs/how_to_customize/AboutElements.md` file) provides a
+comprehensive description of the `elements.json` file used to define
+backgrounds and decorations.  It lists all fields available for each
+background or decoration entry and explains their meanings:
+
+* `enable` – whether the element is used; if false, the entry is ignored.
+* `page` – list of pages (indices starting from 0) on which the element
+  appears; an empty list or omission means all pages.
+* `duration` – for animated backgrounds, a list of durations in
+  milliseconds; length must match number of frames.
+* `playbackSequence` – sequence of indices specifying the playback order of
+  frames; by default frames play sequentially.
+* `Lay` (`lay`) – 0 for bottom decoration (drawn below text), 1 for top
+  decoration (drawn above text).
+* `imgName` – filename of the image in the `imgs` directory.
+* `xScale` and `yScale` – horizontal and vertical scaling factors relative
+  to the output image width and height (e.g. 0.5 means half the width).
+* `xAlign` and `yAlign` – alignment positions such as `left`, `center`,
+  `right`, `top`, `middle`, `bottom` controlling where the element is
+  anchored.
+* `xFix` and `yFix` – pixel offsets applied after alignment.
+* `lockX` and `lockY` – booleans controlling whether the element moves with
+  the text when content flows across pages; `true` means the element stays
+  fixed relative to the page.
+
+The page explains how backgrounds can use mode 0 (single image) or mode 1
+(nine‑patch) and discusses common use cases such as repeating patterns,
+tiling textures, centering images, and scaling decorative elements.  It also
+covers performance considerations when using large images or animated GIFs.
+
+#### Background and Decoration System
+
+The **Background and Decoration System** page (implied by the elements
+configuration and style internals) explains the mechanisms used to draw
+backgrounds and decorations.  It builds on the `MdDecorates` class discussed in
+Core Architecture.  Key points include:
+
+* **Background modes** – Single‑image backgrounds are scaled or tiled to fit
+  the page; nine‑patch backgrounds use separate images for corners, edges
+  and center to allow flexible scaling without distorting corners; pattern
+  backgrounds can be repeated horizontally, vertically or both.
+* **Decorative layers** – Decorations can be drawn on a bottom layer
+  (underneath the text) or a top layer (overlaying the final image).  Each
+  decoration entry in `elements.json` defines its placement, scaling and
+  locking behaviour, enabling complex compositions (e.g. watermarks, icons,
+  lines or GIF animations).  Decorations can also be animated by specifying
+  frame sequences and durations.
+* **Background functions** – Custom Python functions in `style.py` can
+  generate procedural backgrounds (e.g. gradients, noise, geometric
+  patterns).  Functions decorated with `@NewBgDrawer` are registered
+  automatically and can be referenced in `elements.json` by name.
+* **Caching** – Background images and procedural backgrounds are cached to
+  avoid redundant scaling.  Nine‑patch backgrounds cache the processed
+  segments for each page size.  Animated backgrounds reuse frames across
+  pages when possible.
+
+#### Custom Elements and Extensions
+
+The **Custom Elements and Extensions** page (tied to the extension
+framework) describes how to extend the renderer by writing new drawing
+functions.  Built‑in objects (progress bar, balance bar, bar chart, card)
+are examples implemented with the `@NewMdExterImageDrawer` decorator.  To
+create your own element:
+
+1. Implement a function that accepts parameters parsed from the syntax
+   `!sgexter[name;args]`.  The function receives the rendering context,
+   style configuration and element arguments; it returns a PIL image and
+   size information.
+2. Decorate the function with `@NewMdExterImageDrawer("name")` to register
+   it.  The parser will call this function when encountering `!sgexter[name;...]`.
+3. Use the context to access fonts, colours and layout information; draw
+   shapes, text or charts; and return the finished image.
+
+The page encourages sharing custom elements with the community and notes
+considerations such as scaling to different resolutions, respecting style
+colours, and handling animations if needed.
+
+
+Advanced Features
+-----------------
+
+### LaTeX Integration
+
+This page describes integration with `pillowlatex` for rendering mathematical
+expressions.  The parser recognises inline formulas enclosed in `$...$` and
+block formulas enclosed in `$$...$$`.  It uses pattern matching to find
+matching delimiters and escapes nested occurrences.  The rendering pipeline
+steps are:
+
+1. **Object extraction** – `pillowlatex.GetLaTeXObjs` collects all LaTeX
+   expressions in the text.
+2. **Font conversion** – `MixFontToLatexFont` converts the `MixFont`
+   configuration into a format understood by `pillowlatex`, ensuring that
+   LaTeX text uses the same font family and sizes as surrounding text.
+3. **Size measurement and layout** – The engine measures the size of each
+   expression and reserves space in the layout; it scales the font size by
+   `expressionSizeRate` and applies expression-specific spacing.
+4. **Rendering** – Each LaTeX object is rendered to an image and inserted
+   into the final composition.  Colour and underpainting follow the style’s
+   expression configuration.
+
+A table in this section lists default expression parameters: expression font
+scaling factor (`expressionSizeRate`), expression text colour, underpainting
+colour for LaTeX blocks, and expression text spacing.  Complex expressions
+such as fractions, roots, trigonometric functions, sums, integrals, matrices
+and modular arithmetic are supported.  Caching strategies reuse rendered
+expressions to improve performance, and memory management cleans up temporary
+files generated by `pillowlatex`.
+
+### Image Processing and Layout
+
+This page delves into the coordinate system and image operations used by
+CustomMarkdownImage:
+
+* **Coordinate system** – The top left corner of the page is `(0,0)`.
+  Margins from `MdStyle` (`ld`, `rd`, `ud`, `dd`) define the text area.
+  Variables `nx` and `ny` track the current draw position; `nmaxh` stores
+  the maximum height in the current line; `nmaxs` stores the maximum
+  descent.  When a new element does not fit, the engine moves to a new
+  line or new page.
+* **Image filling** – The `FillImage` function implements seven fill modes:
+  1. Stretch to fill the entire area;
+  2. Tile repeat (repeats both horizontally and vertically);
+  3. Optimized tile (tiles only when necessary);
+  4. Horizontal repeat (repeats along the x‑axis only);
+  5. Vertical repeat (y‑axis only);
+  6. Optimized horizontal;
+  7. Optimized vertical.
+  These modes are used to draw backgrounds and patterns.
+* **Image resizing** – `ImgResize` performs intelligent scaling of images
+  inserted via Markdown.  It maintains aspect ratio and respects maximum
+  width/height constraints; if `useImageUrl` is enabled, images are
+  downloaded asynchronously via `httpx` and cached.
+* **Table processor** – The table engine calculates column widths by
+  analysing cell content and header lengths, scales widths to fit within
+  `xSizeMax`, wraps long content and draws grid lines.  Table cells can
+  contain text, LaTeX or even images.
+* **LaTeX integration in layout** – Expressions are detected and rendered
+  during layout; the engine maintains separate stacks for normal fonts and
+  LaTeX fonts to handle different scaling and baselines.  The layout
+  algorithm ensures that formulas align correctly with surrounding text.
+* **Rendering result management** – The `MdRenderResult` dataclass (fields
+  `image`, `imageType`, `imageList`, `gifDuration`) stores the primary
+  image or frames and provides saving functions.  The page also summarises
+  features of the font management system and caching strategies.
+
+Performance optimizations include incremental rendering (drawing as tokens are
+processed), smart skipping of special blocks, memory management for large
+images (reusing allocated canvases), and asynchronous downloading and LaTeX
+rendering.  It recommends using `debug=True` to visualise bounding boxes for
+troubleshooting and suggests adjusting `xSizeMax` and margins to control
+layout density.
+
+### Async Rendering and Performance
+
+The last advanced features page focuses on asynchronous rendering and general
+performance tuning.  `MdToImage` supports asynchronous workflows that allow
+text parsing to proceed while remote images and LaTeX expressions are
+rendered concurrently.  For example, when `useImageUrl=True`, images from
+web URLs are fetched via `httpx` in parallel; once downloaded, they are
+inserted into the layout.  LaTeX rendering also runs in separate tasks.
+
+Performance optimisation strategies include:
+
+* **Font caching** – Keeps fonts loaded in memory across renders; avoids
+  repeated disk I/O.
+* **Layered composition** – Separates the canvas into text, image, effect
+  and decoration layers, enabling independent caching and re‑rendering of
+  components.
+* **Memory management** – Cleans up temporary files and caches after
+  rendering, particularly for LaTeX and remote images.  A debug flag helps
+  monitor memory usage.
+* **Timeout management and resource optimisation** – Allows setting
+  `imageUrlGetTimeout` and `latexTimeout` to prevent stalls when external
+  resources are slow.  Encourages placing fonts and images in local
+  directories accessible with minimal overhead.
+
+A performance comparison table shows that asynchronous rendering can
+accelerate documents with many image URLs or complex LaTeX by 30–70 %, while
+mixed content sees moderate gains.  It also highlights advanced features such
+as GIF animation, asynchronous LaTeX processing and progress bar rendering.
+
+Best practices include:
+
+1. Use asynchronous rendering when documents contain remote images or heavy
+   LaTeX; call `await MdToImage.AioRender(...)` within an async context.
+2. Optimise font configuration by limiting fallback fonts to necessary
+   languages and including common glyphs in the primary font.
+3. Batch process multiple documents using async gather to maximise
+   concurrency.
+4. Use `autoPage=True` to automatically split long documents and set
+   `xSizeMax` and margins for optimal layout density.
+5. Monitor performance with `debug=True` and adjust timeouts for remote
+   resources.
+
+
+Conclusion
+----------
+
+CustomMarkdownImage is a comprehensive tool for rendering Markdown into
+high‑quality images with fine control over typography, colours, layout and
+embellishments.  The documentation describes installation and quick start
+examples, details the architecture of the parser and rendering pipeline, and
+explains the style configuration system that enables both built‑in themes and
+user‑defined styles.  Advanced topics cover font management, LaTeX
+integration, image processing, background and decoration systems, custom
+extensions, and asynchronous rendering for performance.  With careful
+configuration, users can create professional reports, social media graphics or
+presentations in a purely Python environment.
