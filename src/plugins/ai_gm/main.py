@@ -192,6 +192,11 @@ class AIGMPlugin(NcatBotPlugin):
                 await self.command_handler.handle_checkout_head(event)
             else:
                 await event.reply("权限不足。")
+        elif sub_command == "admin" and len(args) > 1 and args[1] == "unfreeze":
+            if self.rbac_manager.user_has_role(str(event.user_id), "root") or event.sender.role in ["admin", "owner"]:
+                await self.command_handler.handle_admin_unfreeze(event)
+            else:
+                await event.reply("权限不足。您必须是群管理员或root用户。")
         elif sub_command == "cache" and len(args) > 2 and args[1] == "pending" and args[2] == "clear":
             await self.command_handler.handle_cache_pending_clear(event)
         else:

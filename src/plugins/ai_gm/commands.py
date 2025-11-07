@@ -34,6 +34,7 @@ class CommandHandler:
         /aigm game attach <id> - 将游戏附加到当前频道
         /aigm game detach - 从当前频道分离游戏
         /aigm checkout head - 重新加载并显示当前游戏的最新状态
+        /aigm admin unfreeze - [管理员] 强制解冻当前游戏
         """
         await event.reply(help_text.strip())
 
@@ -141,3 +142,20 @@ class CommandHandler:
         """处理 /aigm cache pending clear 命令"""
         await self.cache_manager.clear_pending_games()
         await event.reply("已清空所有待处理的新游戏请求缓存。")
+
+    async def handle_admin_unfreeze(self, event: GroupMessageEvent):
+        """处理 /aigm admin unfreeze 命令"""
+        group_id = str(event.group_id)
+        game = await self.db.get_game_by_channel_id(group_id)
+
+        if not game:
+            await event.reply("当前频道没有正在进行的游戏。")
+            return
+
+        if not game["is_frozen"]:
+            await event.reply("游戏未处于冻结状态。")
+            return
+
+        game_id = game["game_id"]
+        await self.db.set_game_frozen_status(game_id, False)
+        await event.reply(f"✅ 游戏 {game_id} 已被成功解冻，您可以继续操作了。")
