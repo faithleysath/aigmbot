@@ -244,6 +244,10 @@ class EventHandler:
 
     async def _is_group_admin_or_host(self, group_id: str, user_id: str) -> bool:
         """检查用户是否为群管理员或游戏主持人"""
+        # Root 用户拥有完整控制权
+        if self.plugin.rbac_manager.user_has_role(user_id, "root"):
+            return True
+        
         if not self.db:
             return False
         try:
