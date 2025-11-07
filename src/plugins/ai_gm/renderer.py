@@ -54,7 +54,7 @@ class MarkdownRenderer:
                 <style>
                     body {{
                         /* 最终渲染宽度 */
-                        width: 1080px;
+                        width: 1200px;
                         box-sizing: border-box; /* 确保 padding 不会撑大宽度 */
 
                         /* 暗色主题 */
@@ -62,7 +62,7 @@ class MarkdownRenderer:
                         color: #ffffff;
 
                         /* 舒适的内边距 */
-                        padding: 40px;
+                        padding: 50px;
 
                         /* 系统默认字体 */
                         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -70,7 +70,7 @@ class MarkdownRenderer:
                         /* 根据21个字/行计算出的字体大小 */
                         font-size: 47px;
                         line-height: 1.6;
-                        letter-spacing: 0.05em; /* 调整文字横向间距 */
+                        letter-spacing: 0.1em; /* 调整文字横向间距 */
                         margin: 0 auto; /* 居中显示 */
 
                         word-break: break-all; /* 防止长单词溢出 */

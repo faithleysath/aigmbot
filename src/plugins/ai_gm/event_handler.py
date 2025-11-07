@@ -61,7 +61,7 @@ class EventHandler:
                         return
                     content = await response.text()
 
-            preview = content[:600] # 预览前600字符
+            preview = content[:2000] # 预览前2000字符
             img: bytes | None = None
             if self.renderer:
                 img = await self.renderer.render_markdown(preview)
