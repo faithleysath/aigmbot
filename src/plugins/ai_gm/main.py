@@ -2,6 +2,7 @@ from ncatbot.plugin_system import (
     NcatBotPlugin,
     on_notice,
     filter_registry,
+    command_registry,
 )
 from ncatbot.core.event import GroupMessageEvent, NoticeEvent
 from ncatbot.utils import get_log
@@ -14,6 +15,7 @@ from .cache import CacheManager
 from .game_manager import GameManager
 from .event_handler import EventHandler
 from .content_fetcher import ContentFetcher
+from .commands import CommandHandler
 
 LOG = get_log(__name__)
 
@@ -32,6 +34,7 @@ class AIGMPlugin(NcatBotPlugin):
         self.cache_manager: CacheManager | None = None
         self.game_manager: GameManager | None = None
         self.event_handler: EventHandler | None = None
+        self.command_handler: CommandHandler | None = None
         self.data_path: Path = Path()
 
     async def on_load(self):
@@ -94,6 +97,11 @@ class AIGMPlugin(NcatBotPlugin):
                 self.renderer,
                 content_fetcher,
             )
+            self.command_handler = CommandHandler(
+                self,
+                self.db,
+                self.game_manager,
+            )
         else:
             LOG.error(f"[{self.name}] 部分组件初始化失败，插件功能可能不完整。")
 
@@ -119,3 +127,58 @@ class AIGMPlugin(NcatBotPlugin):
     async def handle_emoji_reaction(self, event: NoticeEvent):
         if self.event_handler:
             await self.event_handler.handle_emoji_reaction(event)
+
+    async def _is_authorized(self, event: GroupMessageEvent) -> bool:
+        """检查用户是否有权执行写操作"""
+        user_id = str(event.user_id)
+        group_id = str(event.group_id)
+
+        # Root用户
+        if self.rbac_manager.user_has_role(user_id, "root"):
+            return True
+
+        # 群管理员
+        if event.sender.role in ["admin", "owner"]:
+            return True
+
+        # 游戏主持人
+        if self.db:
+            game = await self.db.get_game_by_channel_id(group_id)
+            if game and str(game["host_user_id"]) == user_id:
+                return True
+
+        return False
+
+    @command_registry.command("aigm")
+    async def aigm_command(self, event: GroupMessageEvent, *args: str):
+        if not self.command_handler:
+            return
+
+        if not args:
+            await self.command_handler.handle_help(event)
+            return
+
+        sub_command = args[0]
+        if sub_command == "status":
+            await self.command_handler.handle_status(event)
+        elif sub_command == "game" and len(args) > 1:
+            game_sub_command = args[1]
+            if game_sub_command == "list":
+                await self.command_handler.handle_game_list(event)
+            elif game_sub_command == "attach" and len(args) > 2:
+                if await self._is_authorized(event):
+                    await self.command_handler.handle_game_attach(event, args[2])
+                else:
+                    await event.reply("权限不足。")
+            elif game_sub_command == "detach":
+                if await self._is_authorized(event):
+                    await self.command_handler.handle_game_detach(event)
+                else:
+                    await event.reply("权限不足。")
+        elif sub_command == "checkout" and len(args) > 1 and args[1] == "head":
+            if await self._is_authorized(event):
+                await self.command_handler.handle_checkout_head(event)
+            else:
+                await event.reply("权限不足。")
+        else:
+            await self.command_handler.handle_help(event)

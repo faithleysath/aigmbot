@@ -356,3 +356,33 @@ class Database:
         async with self.transaction():
             async with self.conn.cursor() as cursor:
                 await cursor.execute("DELETE FROM games WHERE game_id = ?", (game_id,))
+
+    async def get_all_games(self):
+        """获取所有游戏的信息"""
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+        async with self.conn.cursor() as cursor:
+            await cursor.execute("SELECT game_id, channel_id, host_user_id, created_at, updated_at FROM games")
+            return await cursor.fetchall()
+
+    async def attach_game_to_channel(self, game_id: int, channel_id: str):
+        """将游戏附加到频道"""
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+        async with self.transaction():
+            async with self.conn.cursor() as cursor:
+                await cursor.execute(
+                    "UPDATE games SET channel_id = ? WHERE game_id = ?",
+                    (channel_id, game_id),
+                )
+
+    async def detach_game_from_channel(self, game_id: int):
+        """从频道分离游戏"""
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+        async with self.transaction():
+            async with self.conn.cursor() as cursor:
+                await cursor.execute(
+                    "UPDATE games SET channel_id = NULL WHERE game_id = ?",
+                    (game_id,),
+                )
