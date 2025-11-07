@@ -1,4 +1,3 @@
-# src/plugins/ai_trpg/event_handler.py
 import json
 from datetime import datetime, timedelta, timezone
 import aiohttp

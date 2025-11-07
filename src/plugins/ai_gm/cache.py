@@ -1,4 +1,3 @@
-# File: src/plugins/ai_trpg/cache.py
 import json
 from datetime import datetime
 from pathlib import Path

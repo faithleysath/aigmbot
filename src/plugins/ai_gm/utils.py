@@ -1,4 +1,3 @@
-# src/plugins/ai_trpg/utils.py
 from typing import Any
 import base64
 

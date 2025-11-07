@@ -1,4 +1,3 @@
-# src/plugins/ai_trpg/game_manager.py
 import json
 from typing import cast
 from ncatbot.utils import get_log

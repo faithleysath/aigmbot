@@ -1,4 +1,3 @@
-# src/plugins/ai_trpg/content_fetcher.py
 from ncatbot.plugin_system import NcatBotPlugin
 from ncatbot.utils import get_log
 
