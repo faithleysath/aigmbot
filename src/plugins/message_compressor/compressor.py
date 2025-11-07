@@ -191,52 +191,55 @@ class MessageCompressorPlugin(NcatBotPlugin):
         # 首次接收消息时，记录 bot 的 ID
         if self.bot_id is None:
             self.bot_id = str(event.self_id)
-        if not self._is_group_admin(event):
-            await event.reply("抱歉，只有群管理员或群主才能使用此命令。")
-            return
 
         group_id = event.group_id
         
-        if action in ["enable", "on"]:
-            self.config["group_settings"].setdefault(group_id, {})["enabled"] = True
-            await event.reply("✅ 在本群已启用自动打包压缩功能。")
-        
-        elif action in ["disable", "off"]:
-            self.config["group_settings"].setdefault(group_id, {})["enabled"] = False
-            await event.reply("❌ 在本群已禁用自动打包压缩功能。")
-
-        elif action == "threshold":
-            if not val1 or not val2:
-                await event.reply("❌ 参数不足，请提供两个有效的数字作为阈值。\n用法: /compressor threshold <消息数> <转发数>")
+        admin_actions = ["enable", "on", "disable", "off", "threshold"]
+        if action in admin_actions:
+            if not (self._is_group_admin(event) or self.rbac_manager.user_has_role(event.user_id, "root")):
+                await event.reply("抱歉，只有群管理员、群主或root用户才能使用此命令。")
                 return
-            try:
-                errors = []
-                msg_threshold = int(val1)
-                fwd_threshold = int(val2)
 
-                if msg_threshold < 2:
-                    errors.append("消息数阈值不能小于2。")
-                if fwd_threshold < 2:
-                    errors.append("转发数阈值不能小于2。")
-                
-                if not errors and msg_threshold * fwd_threshold > 100:
-                    errors.append("两个阈值的乘积不能超过100。")
+            if action in ["enable", "on"]:
+                self.config["group_settings"].setdefault(group_id, {})["enabled"] = True
+                await event.reply("✅ 在本群已启用自动打包压缩功能。")
+            
+            elif action in ["disable", "off"]:
+                self.config["group_settings"].setdefault(group_id, {})["enabled"] = False
+                await event.reply("❌ 在本群已禁用自动打包压缩功能。")
 
-                if errors:
-                    error_message = "❌ 设置失败：\n" + "\n".join(f"- {e}" for e in errors)
-                    await event.reply(error_message)
+            elif action == "threshold":
+                if not val1 or not val2:
+                    await event.reply("❌ 参数不足，请提供两个有效的数字作为阈值。\n用法: /compressor threshold <消息数> <转发数>")
                     return
+                try:
+                    errors = []
+                    msg_threshold = int(val1)
+                    fwd_threshold = int(val2)
 
-                group_conf = self.config["group_settings"].setdefault(group_id, {})
-                group_conf["message_threshold"] = msg_threshold
-                group_conf["forward_threshold"] = fwd_threshold
-                await event.reply(
-                    f"✅ 在本群的触发阈值已更新：\n"
-                    f"- 消息数达到 {msg_threshold} 条时打包\n"
-                    f"- 打包记录达到 {fwd_threshold} 条时再次打包"
-                )
-            except (ValueError, TypeError):
-                await event.reply("❌ 参数错误，请提供两个有效的数字作为阈值。\n用法: /compressor threshold <消息数> <转发数>")
+                    if msg_threshold < 2:
+                        errors.append("消息数阈值不能小于2。")
+                    if fwd_threshold < 2:
+                        errors.append("转发数阈值不能小于2。")
+                    
+                    if not errors and msg_threshold * fwd_threshold > 100:
+                        errors.append("两个阈值的乘积不能超过100。")
+
+                    if errors:
+                        error_message = "❌ 设置失败：\n" + "\n".join(f"- {e}" for e in errors)
+                        await event.reply(error_message)
+                        return
+
+                    group_conf = self.config["group_settings"].setdefault(group_id, {})
+                    group_conf["message_threshold"] = msg_threshold
+                    group_conf["forward_threshold"] = fwd_threshold
+                    await event.reply(
+                        f"✅ 在本群的触发阈值已更新：\n"
+                        f"- 消息数达到 {msg_threshold} 条时打包\n"
+                        f"- 打包记录达到 {fwd_threshold} 条时再次打包"
+                    )
+                except (ValueError, TypeError):
+                    await event.reply("❌ 参数错误，请提供两个有效的数字作为阈值。\n用法: /compressor threshold <消息数> <转发数>")
 
         elif action == "status":
             settings = self.config["group_settings"].get(group_id, {})
