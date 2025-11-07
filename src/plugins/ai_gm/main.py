@@ -101,6 +101,7 @@ class AIGMPlugin(NcatBotPlugin):
                 self,
                 self.db,
                 self.game_manager,
+                self.cache_manager,
             )
         else:
             LOG.error(f"[{self.name}] 部分组件初始化失败，插件功能可能不完整。")

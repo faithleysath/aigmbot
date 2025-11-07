@@ -90,7 +90,7 @@ class GameManager:
 
     async def checkout_head(self, game_id: int):
         """检出游戏 head 指向的分支的最新回合，并向玩家展示"""
-        if not self.db or not self.db.conn or not self.renderer:
+        if not self.db or not self.db.conn or not self.renderer or not self.cache_manager:
             LOG.error(f"检出 head 失败：组件未初始化。")
             return
 
@@ -105,6 +105,9 @@ class GameManager:
                 game_info["channel_id"],
                 game_info["tip_round_id"],
             )
+
+            # 清理当前频道的投票缓存
+            await self.cache_manager.clear_group_vote_cache(str(channel_id))
 
             # 2. 获取最新回合的剧情
             round_info = await self.db.get_round_info(tip_round_id)

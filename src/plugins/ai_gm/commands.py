@@ -6,6 +6,7 @@ from ncatbot.utils import get_log
 
 from .db import Database
 from .game_manager import GameManager
+from .cache import CacheManager
 
 LOG = get_log(__name__)
 
@@ -16,11 +17,13 @@ class CommandHandler:
         plugin: NcatBotPlugin,
         db: Database,
         game_manager: GameManager,
+        cache_manager: CacheManager,
     ):
         self.plugin = plugin
         self.api = plugin.api
         self.db = db
         self.game_manager = game_manager
+        self.cache_manager = cache_manager
 
     async def handle_help(self, event: GroupMessageEvent):
         """处理 /aigm help 命令"""
@@ -118,7 +121,8 @@ class CommandHandler:
 
         game_id = game['game_id']
         await self.db.detach_game_from_channel(game_id)
-        await event.reply(f"成功从当前频道分离游戏 {game_id}。")
+        await self.cache_manager.clear_group_vote_cache(group_id)
+        await event.reply(f"成功从当前频道分离游戏 {game_id}，并已清理相关缓存。")
 
     async def handle_checkout_head(self, event: GroupMessageEvent):
         """处理 /aigm checkout head 命令"""
