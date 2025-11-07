@@ -19,15 +19,15 @@ RUN pip install -r requirements.txt --no-cache-dir
 # 安装playwright
 RUN playwright install --with-deps
 
-# 安装本地修改版的 ncatbot 框架
-# 1. 复制源码到镜像中
-COPY ncatbot/ /app/ncatbot/
-# 2. （可选）如果 requirements.txt 中有 ncatbot，先卸载官方版
-RUN pip uninstall -y ncatbot
-# 3. 从本地源码目录直接安装
-RUN pip install /app/ncatbot/
-# 4. 清理源码，减小镜像体积
-RUN rm -rf /app/ncatbot/
+# # 安装本地修改版的 ncatbot 框架
+# # 1. 复制源码到镜像中
+# COPY ncatbot/ /app/ncatbot/
+# # 2. （可选）如果 requirements.txt 中有 ncatbot，先卸载官方版
+# RUN pip uninstall -y ncatbot
+# # 3. 从本地源码目录直接安装
+# RUN pip install /app/ncatbot/
+# # 4. 清理源码，减小镜像体积
+# RUN rm -rf /app/ncatbot/
 
 # 将src目录下的所有文件复制到容器的/app目录中
 COPY src/ /app/
