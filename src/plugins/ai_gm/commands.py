@@ -53,7 +53,8 @@ class CommandHandler:
         /aigm game list - 列出所有游戏
         /aigm game attach <id> - 将游戏附加到当前频道
         /aigm game detach - 从当前频道分离游戏
-        /aigm game sethost [id] @user - 变更游戏主持人
+        /aigm game sethost @user - 变更当前频道游戏的主持人
+        /aigm game sethost-by-id <id> @user - 变更指定ID游戏的主持人
         /aigm checkout head - 重新加载并显示当前游戏的最新状态
         /aigm admin unfreeze - [管理员] 强制解冻当前游戏
         """
@@ -102,15 +103,9 @@ class CommandHandler:
 
         await event.reply(game_list_text.strip())
 
-    async def handle_game_attach(self, event: GroupMessageEvent, args: tuple[str, ...]):
+    async def handle_game_attach(self, event: GroupMessageEvent, game_id: int):
         """处理 /aigm game attach <id> 命令"""
-        if len(args) < 3:
-            await event.reply("请提供游戏ID。用法: /aigm game attach <id>")
-            return
-        game_id_str = args[2]
-
         try:
-            game_id = int(game_id_str)
             target_game = await self.db.get_game_by_game_id(game_id)
 
             # Permission Check
@@ -145,22 +140,14 @@ class CommandHandler:
             LOG.error(f"附加游戏失败: {e}", exc_info=True)
             await event.reply("附加失败：可能已被其他并发操作占用本频道，请稍后重试。")
 
-    async def handle_game_set_host(self, event: GroupMessageEvent, args: tuple[str, ...]):
+    async def handle_game_set_host(
+        self, event: GroupMessageEvent, new_host_id: str, game_id: int | None = None
+    ):
         """处理 /aigm game sethost [id] @user 命令"""
-        at_segments = event.message.filter(At)
-        if not at_segments:
-            await event.reply("请 @ 一位用户作为新的主持人。")
-            return
-        new_host_id = at_segments[0].qq
-
-        # Parse args: /aigm game sethost @user OR /aigm game sethost 123 @user
-        game_id_str = args[2] if len(args) > 2 and args[2].isdigit() else None
-        target_game_id = None
+        target_game_id = game_id
 
         try:
-            if game_id_str:
-                target_game_id = int(game_id_str)
-            else:
+            if not target_game_id:
                 game = await self.db.get_game_by_channel_id(str(event.group_id))
                 if game:
                     target_game_id = game["game_id"]

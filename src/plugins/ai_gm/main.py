@@ -5,8 +5,10 @@ from ncatbot.plugin_system import (
     command_registry,
 )
 from ncatbot.core.event import GroupMessageEvent, NoticeEvent
+from ncatbot.core.event.message_segment import At
 from ncatbot.utils import get_log
 from pathlib import Path
+from typing import Union
 
 from .db import Database
 from .llm_api import LLM_API
@@ -134,35 +136,73 @@ class AIGMPlugin(NcatBotPlugin):
         if self.event_handler:
             await self.event_handler.handle_message_retraction(event)
 
-    @command_registry.command("aigm")
-    async def aigm_command(self, event: GroupMessageEvent, *args: str):
-        if not self.command_handler:
-            return
+    aigm_group = command_registry.group("aigm", description="AI GM 游戏插件命令")
 
-        if not args:
+    @aigm_group.command("", description="显示帮助信息")  # 默认命令
+    async def aigm_help(self, event: GroupMessageEvent):
+        if self.command_handler:
             await self.command_handler.handle_help(event)
-            return
 
-        cmd = args[0]
-        if cmd == "status":
+    @aigm_group.command("status", description="查看当前游戏状态")
+    async def aigm_status(self, event: GroupMessageEvent):
+        if self.command_handler:
             await self.command_handler.handle_status(event)
-        elif cmd == "game" and len(args) > 1:
-            sub_cmd = args[1]
-            if sub_cmd == "list":
-                await self.command_handler.handle_game_list(event)
-            elif sub_cmd == "attach":
-                await self.command_handler.handle_game_attach(event, args)
-            elif sub_cmd == "detach":
-                await self.command_handler.handle_game_detach(event)
-            elif sub_cmd == "sethost":
-                await self.command_handler.handle_game_set_host(event, args)
-            else:
-                await self.command_handler.handle_help(event)
-        elif cmd == "checkout" and len(args) > 1 and args[1] == "head":
+
+    # --- Game Subcommands ---
+    game_group = aigm_group.group("game", description="游戏管理")
+
+    @game_group.command("list", description="列出所有游戏")
+    async def aigm_game_list(self, event: GroupMessageEvent):
+        if self.command_handler:
+            await self.command_handler.handle_game_list(event)
+
+    @game_group.command("attach", description="将游戏附加到当前频道")
+    async def aigm_game_attach(self, event: GroupMessageEvent, game_id: int):
+        if self.command_handler:
+            await self.command_handler.handle_game_attach(event, game_id)
+
+    @game_group.command("detach", description="从当前频道分离游戏")
+    async def aigm_game_detach(self, event: GroupMessageEvent):
+        if self.command_handler:
+            await self.command_handler.handle_game_detach(event)
+
+    @game_group.command("sethost", description="变更当前频道游戏的主持人")
+    async def aigm_game_set_host(self, event: GroupMessageEvent, at_user: At):
+        if self.command_handler:
+            await self.command_handler.handle_game_set_host(
+                event, new_host_id=at_user.qq
+            )
+
+    @game_group.command("sethost-by-id", description="根据ID变更游戏主持人")
+    async def aigm_game_set_host_by_id(
+        self, event: GroupMessageEvent, game_id: int, at_user: At
+    ):
+        if self.command_handler:
+            await self.command_handler.handle_game_set_host(
+                event, new_host_id=at_user.qq, game_id=game_id
+            )
+
+    # --- Checkout Subcommands ---
+    checkout_group = aigm_group.group("checkout", description="游戏历史操作")
+
+    @checkout_group.command("head", description="重新加载并显示最新状态")
+    async def aigm_checkout_head(self, event: GroupMessageEvent):
+        if self.command_handler:
             await self.command_handler.handle_checkout_head(event)
-        elif cmd == "admin" and len(args) > 1 and args[1] == "unfreeze":
+
+    # --- Admin Subcommands ---
+    admin_group = aigm_group.group("admin", description="管理员命令")
+
+    @admin_group.command("unfreeze", description="强制解冻当前游戏")
+    async def aigm_admin_unfreeze(self, event: GroupMessageEvent):
+        if self.command_handler:
             await self.command_handler.handle_admin_unfreeze(event)
-        elif cmd == "cache" and len(args) > 2 and args[1] == "pending" and args[2] == "clear":
+
+    # --- Cache Subcommands ---
+    cache_group = aigm_group.group("cache", description="缓存管理")
+    pending_group = cache_group.group("pending", description="待处理游戏缓存")
+
+    @pending_group.command("clear", description="清空待处理的新游戏请求")
+    async def aigm_cache_pending_clear(self, event: GroupMessageEvent):
+        if self.command_handler:
             await self.command_handler.handle_cache_pending_clear(event)
-        else:
-            await self.command_handler.handle_help(event)
