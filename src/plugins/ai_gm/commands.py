@@ -136,6 +136,7 @@ class CommandHandler:
 
             await self.db.attach_game_to_channel(game_id, group_id)
             await event.reply(f"成功将游戏 {game_id} 附加到当前频道。")
+            await self.game_manager.checkout_head(game_id)
 
         except ValueError:
             await event.reply("无效的游戏ID，请输入一个数字。")

@@ -377,13 +377,17 @@ class Database:
                 )
 
     async def detach_game_from_channel(self, game_id: int):
-        """从频道分离游戏"""
+        """从频道分离游戏，并清空频道相关的字段"""
         if not self.conn:
             raise RuntimeError("数据库未连接")
         async with self.transaction():
             async with self.conn.cursor() as cursor:
                 await cursor.execute(
-                    "UPDATE games SET channel_id = NULL WHERE game_id = ?",
+                    """UPDATE games SET
+                        channel_id = NULL,
+                        main_message_id = NULL,
+                        candidate_custom_input_ids = '[]'
+                       WHERE game_id = ?""",
                     (game_id,),
                 )
 
