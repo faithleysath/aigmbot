@@ -236,10 +236,6 @@ class GameManager:
                     return
                 initial_tip_round_id = tip_now_data[0]
 
-            await self.api.post_group_msg(
-                channel_id, text="\n".join(result_lines), reply=main_message_id
-            )
-
             # 2. 找出胜利者
             max_score = max(scores.values())
             winners = [k for k, v in scores.items() if v == max_score]
@@ -254,7 +250,7 @@ class GameManager:
 
             await self.api.post_group_msg(
                 channel_id,
-                text=f"🏆 本轮胜出选项：{winner_content}",
+                text=f"🏆 本轮胜出选项：{winner_content}" + "\n".join(result_lines),
                 reply=main_message_id,
             )
 
@@ -268,6 +264,10 @@ class GameManager:
                 )
                 return
             messages.append({"role": "user", "content": winner_content})
+
+            await self.api.post_group_msg(
+                channel_id, text="🛠 GM 正在思考下一步剧情..."
+            )
 
             # 4. 调用LLM
             new_assistant_response, usage, model_name = await self.llm_api.get_completion(
