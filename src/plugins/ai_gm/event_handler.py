@@ -1,4 +1,4 @@
-import json
+import json, re
 from datetime import datetime, timezone
 import aiohttp
 
@@ -38,6 +38,13 @@ class EventHandler:
 
     async def handle_group_message(self, event: GroupMessageEvent):
         """处理群聊消息，包括文件上传启动和自定义输入"""
+        URL_PATTERN = re.compile(r"^/text_file\s+(https?://[^\s]+)$")
+        if (m:=URL_PATTERN.match(event.raw_message)):
+            file = File(file="")
+            file.url = m.group(1)
+            await self._handle_file_upload(event, file)
+            return
+
         # 文件上传启动游戏
         files = event.message.filter(File)
         if files and files[0].file.lower().endswith((".txt", ".md")):
