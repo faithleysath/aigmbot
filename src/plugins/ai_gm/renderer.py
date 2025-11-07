@@ -139,7 +139,7 @@ class MarkdownRenderer:
             browser = await self._ensure_browser()
             page = await browser.new_page()
             try:
-                await page.set_viewport_size({"width": 1080, "height": 100})
+                await page.set_viewport_size({"width": 1200, "height": 100})
                 await page.set_content(html_with_style, wait_until="networkidle")
                 await page.wait_for_timeout(50)
 
