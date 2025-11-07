@@ -281,7 +281,7 @@ class EventHandler:
             await self.api.post_group_msg(
                 group_id,
                 text="\n".join(result_lines)
-                + f"\n由于一位管理员/主持人的反对票，本轮投票并未获通过，将重新开始本輪。",
+                + f"\n由于一位管理员/主持人的反对票，本轮投票并未获通过，将重新开始本轮。",
                 reply=main_message_id,
             )
             if self.cache_manager:
@@ -311,7 +311,7 @@ class EventHandler:
             game_id, json.dumps(candidate_ids)
         )
         await self.api.post_group_msg(
-            group_id, text=" 一条自定义输入已被撤回。", reply=message_id
+            group_id, text=" 由于一名管理员/主持人的撤回，该条回复将不会被计入投票", reply=message_id
         )
         # 从缓存中删除
         if self.cache_manager:
@@ -401,7 +401,7 @@ class EventHandler:
 
             content = await self.content_fetcher.get_custom_input_content(group_id, cid)
             display_content = f'"{content}"' if "ID:" not in content else content
-            result_lines.append(f"- 自定义输入 {display_content}: {net_score} 票")
+            result_lines.append(f"- {display_content}: {net_score} 票")
 
         return scores, result_lines
 

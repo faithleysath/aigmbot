@@ -253,6 +253,12 @@ class GameManager:
                     winner_lines.append(content)
             winner_content = "\n".join(winner_lines)
 
+            await self.api.post_group_msg(
+                channel_id,
+                text=f"🏆 本轮胜出选项：{winner_content}",
+                reply=main_message_id,
+            )
+
             # 3. 构建历史
             messages = await self._build_llm_history(
                 system_prompt, initial_tip_round_id
