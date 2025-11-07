@@ -364,6 +364,34 @@ class EventHandler:
                 game_id, group_id, message_id
             )
 
+    async def handle_message_retraction(self, event: NoticeEvent):
+        """处理消息撤回通知，如果撤回的是候选自定义输入，则自动移除"""
+        if event.notice_type != "group_recall" or not self.db:
+            return
+
+        group_id = str(event.group_id)
+        message_id = str(event.message_id)
+
+        game = await self.db.get_game_by_channel_id(group_id)
+        if not game:
+            return
+
+        candidate_ids = json.loads(game["candidate_custom_input_ids"])
+        if message_id not in candidate_ids:
+            return
+
+        # 找到了匹配的候选输入，执行移除逻辑
+        LOG.info(f"检测到候选回复 {message_id} 被撤回，将自动移除。")
+        candidate_ids.remove(message_id)
+        await self.db.update_candidate_custom_input_ids(
+            game["game_id"], json.dumps(candidate_ids)
+        )
+        await self.api.post_group_msg(
+            group_id, text="一条候选回复已被作者撤回，将不计入投票。", reply=game["main_message_id"]
+        )
+        if self.cache_manager:
+            await self.cache_manager.remove_vote_item(group_id, message_id)
+
     async def _tally_votes(
         self, group_id: str, main_message_id: str, candidate_ids_json: str
     ) -> tuple[dict[str, int], list[str]]:
