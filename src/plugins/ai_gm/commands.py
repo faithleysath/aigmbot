@@ -58,6 +58,7 @@ class CommandHandler:
 /aigm game sethost-by-id <id> @user - 变更指定ID游戏的主持人
 /aigm checkout head - 重新加载并显示当前游戏的最新状态
 /aigm admin unfreeze - [管理员] 强制解冻当前游戏
+/aigm admin delete <id> - [ROOT] 删除指定ID的游戏
         """
         await event.reply(help_text.strip(), at=False)
 
@@ -247,3 +248,29 @@ class CommandHandler:
         game_id = game["game_id"]
         await self.db.set_game_frozen_status(game_id, False)
         await event.reply(f"✅ 游戏 {game_id} 已被成功解冻，您可以继续操作了。", at=False)
+
+    async def handle_admin_delete_game(self, event: GroupMessageEvent, game_id: int):
+        """处理 /aigm admin delete <id> 命令"""
+        if not self.rbac_manager.user_has_role(str(event.user_id), "root"):
+            await event.reply("权限不足。只有root用户才能删除游戏。", at=False)
+            return
+
+        try:
+            game = await self.db.get_game_by_game_id(game_id)
+            if not game:
+                await event.reply(f"找不到ID为 {game_id} 的游戏。", at=False)
+                return
+
+            channel_id = game["channel_id"]
+            await self.db.delete_game(game_id)
+
+            # 如果游戏附加在频道上，清理投票缓存
+            if channel_id:
+                await self.cache_manager.clear_group_vote_cache(str(channel_id))
+
+            await event.reply(f"✅ 成功删除游戏 {game_id}。", at=False)
+            LOG.info(f"Root用户 {event.user_id} 删除了游戏 {game_id}。")
+
+        except Exception as e:
+            LOG.error(f"删除游戏 {game_id} 失败: {e}", exc_info=True)
+            await event.reply(f"删除游戏 {game_id} 失败，请查看日志。", at=False)

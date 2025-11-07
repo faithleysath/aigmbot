@@ -203,6 +203,11 @@ class AIGMPlugin(NcatBotPlugin):
         if self.command_handler:
             await self.command_handler.handle_admin_unfreeze(event)
 
+    @admin_group.command("delete", description="[ROOT] 删除指定ID的游戏")
+    async def aigm_admin_delete_game(self, event: GroupMessageEvent, game_id: int):
+        if self.command_handler:
+            await self.command_handler.handle_admin_delete_game(event, game_id)
+
     # --- Cache Subcommands ---
     cache_group = aigm_group.group("cache", description="缓存管理")
     pending_group = cache_group.group("pending", description="待处理游戏缓存")
