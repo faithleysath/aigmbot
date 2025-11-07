@@ -138,15 +138,20 @@ class AIGMPlugin(NcatBotPlugin):
 
     aigm_group = command_registry.group("aigm", description="AI GM 游戏插件命令")
 
-    @aigm_group.command("", description="显示帮助信息")  # 默认命令
+    @aigm_group.command("", aliases=["help"], description="显示帮助信息")  # 默认命令
     async def aigm_help(self, event: GroupMessageEvent):
+        if self.command_handler:
+            await self.command_handler.handle_help(event)
+
+    @aigm_group.command("help", description="显示帮助信息")
+    async def aigm_help_alias(self, event: GroupMessageEvent):
         if self.command_handler:
             await self.command_handler.handle_help(event)
 
     @aigm_group.command("status", description="查看当前游戏状态")
     async def aigm_status(self, event: GroupMessageEvent):
         if self.command_handler:
-            await self.command_handler.handle_status(event)
+            await self.command_handler.handle_status(event, self.api)
 
     # --- Game Subcommands ---
     game_group = aigm_group.group("game", description="游戏管理")

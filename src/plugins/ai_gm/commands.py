@@ -1,7 +1,8 @@
 # src/plugins/ai_gm/commands.py
 from ncatbot.plugin_system import NcatBotPlugin
 from ncatbot.core.event import GroupMessageEvent
-from ncatbot.core.event.message_segment import At, MessageArray, Text
+from ncatbot.core.event.message_segment import At, MessageArray, Text, Reply
+from ncatbot.core.api import BotAPI
 from ncatbot.utils import get_log
 
 from .db import Database
@@ -48,25 +49,25 @@ class CommandHandler:
     async def handle_help(self, event: GroupMessageEvent):
         """处理 /aigm help 命令"""
         help_text = """
-        /aigm - 显示此帮助信息
-        /aigm status - 查看当前群组的游戏状态
-        /aigm game list - 列出所有游戏
-        /aigm game attach <id> - 将游戏附加到当前频道
-        /aigm game detach - 从当前频道分离游戏
-        /aigm game sethost @user - 变更当前频道游戏的主持人
-        /aigm game sethost-by-id <id> @user - 变更指定ID游戏的主持人
-        /aigm checkout head - 重新加载并显示当前游戏的最新状态
-        /aigm admin unfreeze - [管理员] 强制解冻当前游戏
+/aigm help - 显示此帮助信息
+/aigm status - 查看当前群组的游戏状态
+/aigm game list - 列出所有游戏
+/aigm game attach <id> - 将游戏附加到当前频道
+/aigm game detach - 从当前频道分离游戏
+/aigm game sethost @user - 变更当前频道游戏的主持人
+/aigm game sethost-by-id <id> @user - 变更指定ID游戏的主持人
+/aigm checkout head - 重新加载并显示当前游戏的最新状态
+/aigm admin unfreeze - [管理员] 强制解冻当前游戏
         """
-        await event.reply(help_text.strip())
+        await event.reply(help_text.strip(), at=False)
 
-    async def handle_status(self, event: GroupMessageEvent):
+    async def handle_status(self, event: GroupMessageEvent, api: BotAPI):
         """处理 /aigm status 命令"""
         group_id = str(event.group_id)
         game = await self.db.get_game_by_channel_id(group_id)
 
         if not game:
-            await event.reply("当前群组没有正在进行的游戏。")
+            await event.reply("当前群组没有正在进行的游戏。", at=False)
             return
 
         message_array = MessageArray([
@@ -79,10 +80,11 @@ class CommandHandler:
         ])
         if game['main_message_id']:
             message_array += MessageArray([
-                Text(f"\n- 主消息ID: {game['main_message_id']}")
+                Text(f"\n- 主消息ID: {game['main_message_id']}\n"),
+                Reply(game['main_message_id'])
             ])
 
-        await event.reply(rtf=message_array)
+        await api.post_group_array_msg(event.group_id, message_array)
 
     async def handle_game_list(self, event: GroupMessageEvent):
         """处理 /aigm game list 命令"""
@@ -101,7 +103,7 @@ class CommandHandler:
                 f"创建于: {game['created_at']}\n"
             )
 
-        await event.reply(game_list_text.strip())
+        await event.reply(game_list_text.strip(), at=False)
 
     async def handle_game_attach(self, event: GroupMessageEvent, game_id: int):
         """处理 /aigm game attach <id> 命令"""
@@ -114,23 +116,23 @@ class CommandHandler:
             is_target_game_host = target_game and str(target_game["host_user_id"]) == str(event.user_id)
 
             if not (is_root or is_group_admin or is_target_game_host):
-                await event.reply("权限不足。您必须是群管理员、root用户或该游戏的主持人。")
+                await event.reply("权限不足。您必须是群管理员、root用户或该游戏的主持人。", at=False)
                 return
 
             # Logic
             group_id = str(event.group_id)
             if await self.db.is_game_running(group_id):
-                await event.reply("当前频道已经有一个正在进行的游戏。")
+                await event.reply("当前频道已经有一个正在进行的游戏。", at=False)
                 return
             if not target_game:
-                await event.reply(f"找不到ID为 {game_id} 的游戏。")
+                await event.reply(f"找不到ID为 {game_id} 的游戏。", at=False)
                 return
             if target_game['channel_id']:
-                await event.reply(f"游戏 {game_id} 已经附加到频道 {target_game['channel_id']}。")
+                await event.reply(f"游戏 {game_id} 已经附加到频道 {target_game['channel_id']}。", at=False)
                 return
 
             await self.db.attach_game_to_channel(game_id, group_id)
-            await event.reply(f"成功将游戏 {game_id} 附加到当前频道。")
+            await event.reply(f"成功将游戏 {game_id} 附加到当前频道。正在发送主消息中...", at=False)
             await self.game_manager.checkout_head(game_id)
 
         except ValueError:
@@ -138,7 +140,7 @@ class CommandHandler:
         except Exception as e:
             # 兜底处理 UNIQUE 约束错误或其他 DB 写入错误
             LOG.error(f"附加游戏失败: {e}", exc_info=True)
-            await event.reply("附加失败：可能已被其他并发操作占用本频道，请稍后重试。")
+            await event.reply("附加失败：可能已被其他并发操作占用本频道，请稍后重试。", at=False)
 
     async def handle_game_set_host(
         self, event: GroupMessageEvent, new_host_id: str, game_id: int | None = None
@@ -153,7 +155,7 @@ class CommandHandler:
                     target_game_id = game["game_id"]
 
             if target_game_id is None:
-                await event.reply("无法确定要操作的游戏。")
+                await event.reply("无法确定要操作的游戏。", at=False)
                 return
 
             # Permission Check
@@ -163,12 +165,13 @@ class CommandHandler:
             is_target_game_host = target_game and str(target_game["host_user_id"]) == str(event.user_id)
 
             if not (is_root or is_group_admin or is_target_game_host):
-                await event.reply("权限不足。您必须是群管理员、root用户或该游戏的主持人。")
+                await event.reply("权限不足。您必须是群管理员、root用户或该游戏的主持人。", at=False)
                 return
 
             # Logic
             await self.db.update_game_host(target_game_id, new_host_id)
             await event.reply(
+                at=False,
                 rtf=MessageArray(
                     [
                         Text(f"✅ 成功将游戏 {target_game_id} 的主持人变更为 "),
@@ -178,70 +181,69 @@ class CommandHandler:
                 )
             )
         except ValueError:
-            await event.reply("无效的游戏ID。")
+            await event.reply("无效的游戏ID。", at=False)
         except Exception as e:
             LOG.error(f"变更游戏主持人失败: {e}", exc_info=True)
-            await event.reply("变更主持人失败，请查看日志。")
+            await event.reply("变更主持人失败，请查看日志。", at=False)
 
     async def handle_game_detach(self, event: GroupMessageEvent):
         """处理 /aigm game detach 命令"""
         user_id = str(event.user_id)
         group_id = str(event.group_id)
         if not await self._is_authorized_for_channel_action(user_id, group_id, event.sender.role):
-            await event.reply("权限不足，您必须是群管理员、root用户或该频道游戏的主持人。")
+            await event.reply("权限不足，您必须是群管理员、root用户或该频道游戏的主持人。", at=False)
             return
 
         game = await self.db.get_game_by_channel_id(group_id)
         if not game:
-            await event.reply("当前频道没有附加任何游戏。")
+            await event.reply("当前频道没有附加任何游戏。", at=False)
             return
 
         game_id = game['game_id']
         await self.db.detach_game_from_channel(game_id)
         await self.cache_manager.clear_group_vote_cache(group_id)
-        await event.reply(f"成功从当前频道分离游戏 {game_id}，并已清理相关缓存。")
+        await event.reply(f"成功从当前频道分离游戏 {game_id}，并已清理相关缓存。", at=False)
 
     async def handle_checkout_head(self, event: GroupMessageEvent):
         """处理 /aigm checkout head 命令"""
         user_id = str(event.user_id)
         group_id = str(event.group_id)
         if not await self._is_authorized_for_channel_action(user_id, group_id, event.sender.role):
-            await event.reply("权限不足，您必须是群管理员、root用户或该频道游戏的主持人。")
+            await event.reply("权限不足，您必须是群管理员、root用户或该频道游戏的主持人。", at=False)
             return
 
         game = await self.db.get_game_by_channel_id(group_id)
         if not game:
-            await event.reply("当前频道没有正在进行的游戏。")
+            await event.reply("当前频道没有正在进行的游戏。", at=False)
             return
 
         game_id = game['game_id']
         await self.game_manager.checkout_head(game_id)
-        await event.reply(f"游戏 {game_id} 的最新状态已刷新。")
 
     async def handle_cache_pending_clear(self, event: GroupMessageEvent):
         """处理 /aigm cache pending clear 命令"""
         await self.cache_manager.clear_pending_games()
-        await event.reply("已清空所有待处理的新游戏请求缓存。")
+        await event.reply("已清空所有待处理的新游戏请求缓存。", at=False)
 
     async def handle_admin_unfreeze(self, event: GroupMessageEvent):
         """处理 /aigm admin unfreeze 命令"""
         is_root = self.rbac_manager.user_has_role(str(event.user_id), "root")
         is_group_admin = event.sender.role in ["admin", "owner"]
         if not (is_root or is_group_admin):
-            await event.reply("权限不足。您必须是群管理员或root用户。")
+            await event.reply("权限不足。您必须是群管理员或root用户。", at=False)
             return
 
         group_id = str(event.group_id)
         game = await self.db.get_game_by_channel_id(group_id)
 
         if not game:
-            await event.reply("当前频道没有正在进行的游戏。")
+            await event.reply("当前频道没有正在进行的游戏。", at=False)
             return
 
         if not game["is_frozen"]:
-            await event.reply("游戏未处于冻结状态。")
+            await event.reply("游戏未处于冻结状态。", at=False)
             return
 
         game_id = game["game_id"]
         await self.db.set_game_frozen_status(game_id, False)
-        await event.reply(f"✅ 游戏 {game_id} 已被成功解冻，您可以继续操作了。")
+        await event.reply(f"✅ 游戏 {game_id} 已被成功解冻，您可以继续操作了。", at=False)
