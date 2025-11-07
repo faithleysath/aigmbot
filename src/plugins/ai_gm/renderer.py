@@ -53,39 +53,47 @@ class MarkdownRenderer:
                 <meta charset="UTF-8">
                 <style>
                     body {{
+                        /* 最终渲染宽度 */
+                        width: 1080px;
+                        box-sizing: border-box; /* 确保 padding 不会撑大宽度 */
+
+                        /* 暗色主题 */
+                        background-color: #1B1C1D;
+                        color: #ffffff;
+
+                        /* 舒适的内边距 */
+                        padding: 40px;
+
+                        /* 系统默认字体 */
                         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-                        padding: 20px;
-                        background-color: #f6f8fa;
-                        color: #24292e;
+                        
+                        /* 根据21个字/行计算出的字体大小 */
+                        font-size: 47px;
                         line-height: 1.6;
-                    }}
-                    .container {{
-                        max-width: 800px;
-                        margin: 0 auto;
-                        background-color: #ffffff;
-                        border: 1px solid #d1d5da;
-                        border-radius: 6px;
-                        padding: 20px;
+                        margin: 0 auto; /* 居中显示 */
+
+                        word-break: break-all; /* 防止长单词溢出 */
+                        word-wrap: break-word;
                     }}
                     code {{
                         font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
-                        background-color: #f6f8fa;
+                        /* 适配暗色主题的代码块样式 */
+                        background-color: #282A2C;
+                        color: #C3C5C3;
                         padding: .2em .4em;
                         margin: 0;
                         font-size: 85%;
-                        border-radius: 3px;
+                        border-radius: 6px;
                     }}
                     pre > code {{
                         display: block;
-                        padding: 16px;
-                        overflow: auto;
+                        padding: 2px 30px;
+                        overflow: hidden;
                     }}
                 </style>
             </head>
             <body>
-                <div class="container">
-                    {html_content}
-                </div>
+                {html_content}
             </body>
             </html>
             """
@@ -93,7 +101,7 @@ class MarkdownRenderer:
             browser = await self._ensure_browser()
             page = await browser.new_page()
             try:
-                await page.set_viewport_size({"width": 1000, "height": 100})
+                await page.set_viewport_size({"width": 1080, "height": 100})
                 await page.set_content(html_with_style, wait_until="networkidle")
                 await page.wait_for_timeout(50)
 
