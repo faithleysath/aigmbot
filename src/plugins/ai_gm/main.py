@@ -192,5 +192,7 @@ class AIGMPlugin(NcatBotPlugin):
                 await self.command_handler.handle_checkout_head(event)
             else:
                 await event.reply("权限不足。")
+        elif sub_command == "cache" and len(args) > 2 and args[1] == "pending" and args[2] == "clear":
+            await self.command_handler.handle_cache_pending_clear(event)
         else:
             await self.command_handler.handle_help(event)

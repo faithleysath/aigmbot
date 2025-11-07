@@ -43,6 +43,11 @@ class CacheManager:
             self.pending_new_games.pop(message_id, None)
         await self.save_to_disk()
 
+    async def clear_pending_games(self):
+        async with self._cache_lock:
+            self.pending_new_games.clear()
+        await self.save_to_disk(force=True)
+
     # --- Vote Cache ---
     async def update_vote(
         self, group_id: str, message_id: str, emoji_id: str, user_id: str, is_add: bool

@@ -136,3 +136,8 @@ class CommandHandler:
         game_id = game['game_id']
         await self.game_manager.checkout_head(game_id)
         await event.reply(f"游戏 {game_id} 的最新状态已刷新。")
+
+    async def handle_cache_pending_clear(self, event: GroupMessageEvent):
+        """处理 /aigm cache pending clear 命令"""
+        await self.cache_manager.clear_pending_games()
+        await event.reply("已清空所有待处理的新游戏请求缓存。")
