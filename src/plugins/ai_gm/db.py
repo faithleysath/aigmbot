@@ -386,3 +386,14 @@ class Database:
                     "UPDATE games SET channel_id = NULL WHERE game_id = ?",
                     (game_id,),
                 )
+
+    async def update_game_host(self, game_id: int, new_host_id: str):
+        """更新游戏的主持人"""
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+        async with self.transaction():
+            async with self.conn.cursor() as cursor:
+                await cursor.execute(
+                    "UPDATE games SET host_user_id = ? WHERE game_id = ?",
+                    (new_host_id, game_id),
+                )
