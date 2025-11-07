@@ -1,6 +1,7 @@
 # src/plugins/ai_gm/commands.py
 from ncatbot.plugin_system import NcatBotPlugin
 from ncatbot.core.event import BaseMessageEvent, GroupMessageEvent
+from ncatbot.core.event.message_segment import At, MessageArray, Text
 from ncatbot.utils import get_log
 
 from .db import Database
@@ -42,19 +43,20 @@ class CommandHandler:
             await event.reply("当前群组没有正在进行的游戏。")
             return
 
-        host_at = f"[CQ:at,qq={game['host_user_id']}]"
-        status_text = (
-            f"游戏状态：\n"
-            f"- 游戏ID: {game['game_id']}\n"
-            f"- 主持人: {host_at}\n"
-            f"- 是否冻结: {'是' if game['is_frozen'] else '否'}\n"
-            f"- 创建时间: {game['created_at']}\n"
-            f"- 更新时间: {game['updated_at']}"
-        )
+        message_array = MessageArray([
+            Text("游戏状态：\n"),
+            Text(f"- 游戏ID: {game['game_id']}\n"),
+            Text("- 主持人: "), At(game['host_user_id']), Text("\n"),
+            Text(f"- 是否冻结: {'是' if game['is_frozen'] else '否'}\n"),
+            Text(f"- 创建时间: {game['created_at']}\n"),
+            Text(f"- 更新时间: {game['updated_at']}")
+        ])
         if game['main_message_id']:
-            status_text += f"\n- 主消息ID: {game['main_message_id']}"
+            message_array += MessageArray([
+                Text(f"\n- 主消息ID: {game['main_message_id']}")
+            ])
 
-        await event.reply(status_text)
+        await event.reply(rtf=message_array)
 
     async def handle_game_list(self, event: GroupMessageEvent):
         """处理 /aigm game list 命令"""
