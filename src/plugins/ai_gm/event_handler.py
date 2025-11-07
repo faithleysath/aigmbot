@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import aiohttp
 
 from ncatbot.core.event import GroupMessageEvent, NoticeEvent
@@ -173,12 +173,15 @@ class EventHandler:
         """处理新游戏创建的表情确认"""
         message_id_str = str(event.message_id)
 
-        # 清理过期的请求
+        # 批量清理所有过期的请求
         timeout_seconds = int(self.config.get("pending_game_timeout", 300))
-        if datetime.now(timezone.utc) - pending_game["create_time"] > timedelta(
-            seconds=timeout_seconds
-        ):
-            await self.cache_manager.remove_pending_game(message_id_str)
+        expired_ids = await self.cache_manager.cleanup_expired_pending_games(
+            timeout_seconds
+        )
+
+        # 检查当前这个游戏 proposal 是否已过期（在刚刚的批量清理中被移除）
+        if message_id_str in expired_ids:
+            LOG.info(f"待处理游戏 {message_id_str} 已超时并被清理，操作中止。")
             return
 
         # 权限检查：只有发起人可以确认或取消

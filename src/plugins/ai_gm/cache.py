@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import aiofiles
 import aiofiles.os as aio_os
@@ -46,6 +46,28 @@ class CacheManager:
         async with self._cache_lock:
             self.pending_new_games.clear()
         await self.save_to_disk(force=True)
+
+    async def cleanup_expired_pending_games(self, timeout_seconds: int) -> set[str]:
+        """清理所有过期的待处理游戏并返回被清理的 message_id 集合"""
+        async with self._cache_lock:
+            now = datetime.now(timezone.utc)
+            expired_ids = set()
+            for msg_id, game_data in self.pending_new_games.items():
+                create_time = game_data.get("create_time")
+                if isinstance(create_time, datetime) and (
+                    now - create_time
+                ) > timedelta(seconds=timeout_seconds):
+                    expired_ids.add(msg_id)
+
+            if not expired_ids:
+                return set()
+
+            LOG.info(f"清理 {len(expired_ids)} 个过期的待处理游戏...")
+            for msg_id in expired_ids:
+                self.pending_new_games.pop(msg_id, None)
+
+        await self.save_to_disk(force=True)
+        return expired_ids
 
     # --- Vote Cache ---
     async def update_vote(
