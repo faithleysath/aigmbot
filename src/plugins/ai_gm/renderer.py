@@ -70,6 +70,7 @@ class MarkdownRenderer:
                         /* 根据21个字/行计算出的字体大小 */
                         font-size: 47px;
                         line-height: 1.6;
+                        letter-spacing: 0.05em; /* 调整文字横向间距 */
                         margin: 0 auto; /* 居中显示 */
 
                         word-break: break-all; /* 防止长单词溢出 */
