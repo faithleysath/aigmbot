@@ -36,12 +36,12 @@ class LLM_API:
 
     async def get_completion(
         self, messages: list[ChatCompletionMessageParam]
-    ) -> tuple[str | None, dict | None]:
+    ) -> tuple[str | None, dict | None, str]:
         """
         调用 OpenAI API 获取聊天完成结果。
 
         :param messages: 对话历史列表，格式为 [{"role": "user", "content": "..."}, ...]
-        :return: 一个元组，包含 (AI 返回的内容字符串, usage 字典)，如果出错则返回 (None, None)
+        :return: 一个元组，包含 (AI 返回的内容字符串, usage 字典, 模型名称)，如果出错则返回 (None, None, model_name)
         """
         max_retries = 2
         base_delay = 1.0  # seconds
@@ -64,7 +64,7 @@ class LLM_API:
                         ),
                         "total_tokens": getattr(response.usage, "total_tokens", None),
                     }
-                return content, usage
+                return content, usage, self.model_name
             except (
                 RateLimitError,
                 APITimeoutError,
@@ -93,4 +93,4 @@ class LLM_API:
                 LOG.error(f"调用 OpenAI API 时出现意外错误: {e}")
                 raise
 
-        return None, None
+        return None, None, self.model_name

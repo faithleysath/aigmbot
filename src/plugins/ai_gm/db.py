@@ -86,6 +86,8 @@ class Database:
                     parent_id INTEGER NOT NULL CHECK(parent_id >= -1),
                     player_choice TEXT NOT NULL,
                     assistant_response TEXT NOT NULL,
+                    llm_usage TEXT,
+                    model_name TEXT,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE
                 );
@@ -245,7 +247,13 @@ class Database:
                 return cursor.lastrowid
 
     async def create_round(
-        self, game_id: int, parent_id: int, player_choice: str, assistant_response: str
+        self,
+        game_id: int,
+        parent_id: int,
+        player_choice: str,
+        assistant_response: str,
+        llm_usage: str | None = None,
+        model_name: str | None = None,
     ) -> int:
         """创建新回合并返回 round_id"""
         if not self.conn:
@@ -253,8 +261,15 @@ class Database:
         async with self.transaction():
             async with self.conn.cursor() as cursor:
                 await cursor.execute(
-                    "INSERT INTO rounds (game_id, parent_id, player_choice, assistant_response) VALUES (?, ?, ?, ?)",
-                    (game_id, parent_id, player_choice, assistant_response),
+                    "INSERT INTO rounds (game_id, parent_id, player_choice, assistant_response, llm_usage, model_name) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        game_id,
+                        parent_id,
+                        player_choice,
+                        assistant_response,
+                        llm_usage,
+                        model_name,
+                    ),
                 )
                 if cursor.lastrowid is None:
                     raise RuntimeError("插入回合数据失败")

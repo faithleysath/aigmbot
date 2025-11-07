@@ -1,4 +1,5 @@
 # src/plugins/ai_trpg/game_manager.py
+import json
 from typing import cast
 from ncatbot.utils import get_log
 from ncatbot.plugin_system import NcatBotPlugin
@@ -53,14 +54,21 @@ class GameManager:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": "开始"},
             ]
-            assistant_response, _ = await self.llm_api.get_completion(initial_messages)
+            assistant_response, usage, model_name = await self.llm_api.get_completion(
+                initial_messages
+            )
 
             if not assistant_response:
                 raise Exception("LLM 未能生成开场白。")
 
             # 3. 创建 Round 和 Branch
             round_id = await self.db.create_round(
-                game_id, -1, "开始", assistant_response
+                game_id,
+                -1,
+                "开始",
+                assistant_response,
+                llm_usage=json.dumps(usage) if usage else None,
+                model_name=model_name,
             )
             branch_id = await self.db.create_branch(game_id, "main", round_id)
 
@@ -242,7 +250,7 @@ class GameManager:
             messages.append({"role": "user", "content": winner_content})
 
             # 4. 调用LLM
-            new_assistant_response, _ = await self.llm_api.get_completion(
+            new_assistant_response, usage, model_name = await self.llm_api.get_completion(
                 cast(list[ChatCompletionMessageParam], messages)
             )
             if not new_assistant_response:
@@ -265,12 +273,14 @@ class GameManager:
 
                     # 创建新回合
                     await cursor.execute(
-                        "INSERT INTO rounds (game_id, parent_id, player_choice, assistant_response) VALUES (?, ?, ?, ?)",
+                        "INSERT INTO rounds (game_id, parent_id, player_choice, assistant_response, llm_usage, model_name) VALUES (?, ?, ?, ?, ?, ?)",
                         (
                             game_id,
                             initial_tip_round_id,
                             winner_content,
                             new_assistant_response,
+                            json.dumps(usage) if usage else None,
+                            model_name,
                         ),
                     )
                     new_round_id = cursor.lastrowid
