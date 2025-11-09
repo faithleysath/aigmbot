@@ -164,6 +164,7 @@ class CommandHandler:
 
 管理员命令:
 /aigm admin unfreeze - [群管理/ROOT] 强制解冻当前游戏
+/aigm admin refresh-tunnel - [ROOT] 重新刷新 Cloudflare tunnel
 /aigm admin delete <id> - [ROOT] 删除指定ID的游戏
 /aigm webui - 获取当前游戏的 Web UI 地址
         """
@@ -818,3 +819,23 @@ class CommandHandler:
         except Exception as e:
             LOG.error(f"删除游戏 {game_id} 失败: {e}", exc_info=True)
             await event.reply(f"删除游戏 {game_id} 失败，请查看日志。", at=False)
+
+    async def handle_admin_refresh_tunnel(self, event: GroupMessageEvent):
+        """处理 /aigm admin refresh-tunnel 命令"""
+        # 权限检查：只允许 ROOT 用户
+        if not self.rbac_manager.user_has_role(str(event.user_id), "root"):
+            await event.reply("权限不足。只有root用户才能刷新tunnel。", at=False)
+            return
+        
+        if not self.web_ui:
+            await event.reply("❌ Web UI 未启用。", at=False)
+            return
+        
+        await event.reply("🔄 正在刷新 Cloudflare tunnel，请稍候...", at=False)
+        
+        success = await self.web_ui.refresh_tunnel()
+        
+        if success and self.web_ui.tunnel_url:
+            await event.reply(f"✅ Tunnel 刷新成功！\n新地址: {self.web_ui.tunnel_url}", at=False)
+        else:
+            await event.reply("❌ Tunnel 刷新失败，请查看日志获取详细信息。", at=False)

@@ -112,6 +112,56 @@ class WebUI:
             LOG.warning("Tunnel startup timed out")
             return False
 
+    async def refresh_tunnel(self) -> bool:
+        """
+        重新刷新 Cloudflare tunnel。
+        
+        Returns:
+            bool: 刷新成功返回 True，失败返回 False
+        """
+        LOG.info("开始刷新 Cloudflare tunnel...")
+        
+        # 1. 停止旧 tunnel
+        if self.tunnel:
+            try:
+                self.tunnel.stop()
+                LOG.info("已停止旧 tunnel")
+            except Exception as e:
+                LOG.warning(f"停止旧 tunnel 时出错: {e}")
+            finally:
+                self.tunnel = None
+                self.tunnel_url = None
+        
+        # 2. 重置状态
+        self.tunnel_ready.clear()
+        
+        # 3. 重新创建并启动 tunnel
+        try:
+            from flaredantic import FlareTunnel, FlareConfig
+            config = FlareConfig(
+                port=8000,
+                bin_dir=self.plugin_data_path / "bin",
+                timeout=60,
+                verbose=True
+            )
+            self.tunnel = FlareTunnel(config)
+            await asyncio.to_thread(self.tunnel.start)
+            self.tunnel_url = self.tunnel.tunnel_url
+            
+            if self.tunnel_url:
+                LOG.info(f"✅ Tunnel 刷新成功: {self.tunnel_url}")
+                return True
+            else:
+                LOG.error("⚠️ Tunnel 启动但 URL 不可用")
+                return False
+                
+        except Exception as e:
+            LOG.error(f"❌ 刷新 tunnel 失败: {e}", exc_info=True)
+            self.tunnel_url = None
+            return False
+        finally:
+            self.tunnel_ready.set()
+
     async def route_game_list(self, request: Request):
         games = await self.db.get_all_games()
         return self.templates.TemplateResponse("game_list.html", {"request": request, "games": games})

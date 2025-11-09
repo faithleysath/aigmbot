@@ -381,6 +381,11 @@ class AIGMPlugin(NcatBotPlugin):
         if self.command_handler:
             await self.command_handler.handle_admin_unfreeze(event)
 
+    @admin_group.command("refresh-tunnel", description="[ROOT] 重新刷新 Cloudflare tunnel")
+    async def aigm_admin_refresh_tunnel(self, event: GroupMessageEvent):
+        if self.command_handler:
+            await self.command_handler.handle_admin_refresh_tunnel(event)
+
     @admin_group.command("delete", description="[ROOT] 删除指定ID的游戏")
     async def aigm_admin_delete_game(self, event: GroupMessageEvent, game_id: int):
         if self.command_handler:
