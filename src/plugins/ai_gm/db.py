@@ -16,7 +16,7 @@ _transaction_depth: ContextVar[int] = ContextVar('transaction_depth', default=0)
 class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
-        self.conn = None
+        self.conn: aiosqlite.Connection | None = None
         self._connection_healthy = True
         self._last_health_check = 0.0
         self._health_check_interval = 60.0  # 60秒检查一次连接健康
@@ -279,6 +279,7 @@ class Database:
             RuntimeError: 如果数据库连接失败
         """
         await self._ensure_conn_or_raise()
+        assert self.conn is not None
         async with self.conn.execute(
             "SELECT 1 FROM games WHERE channel_id = ?", (channel_id,)
         ) as cursor:
@@ -299,6 +300,7 @@ class Database:
             RuntimeError: 如果数据库未连接
         """
         await self._ensure_conn_or_raise()
+        assert self.conn is not None
         async with self.conn.execute(
             "SELECT * FROM games WHERE channel_id = ?", (channel_id,)
         ) as cursor:
@@ -318,6 +320,7 @@ class Database:
             RuntimeError: 如果数据库未连接
         """
         await self._ensure_conn_or_raise()
+        assert self.conn is not None
         async with self.conn.execute(
             "SELECT * FROM games WHERE game_id = ?", (game_id,)
         ) as cursor:
@@ -361,6 +364,7 @@ class Database:
             RuntimeError: 如果数据库未连接
         """
         await self._ensure_conn_or_raise()
+        assert self.conn is not None
         async with self.conn.execute(
             "SELECT host_user_id FROM games WHERE channel_id = ?", (channel_id,)
         ) as cursor:
@@ -453,6 +457,7 @@ class Database:
             RuntimeError: 如果数据库未连接或游戏 head 分支未设置
         """
         await self._ensure_conn_or_raise()
+        assert self.conn is not None
         async with self.conn.execute(
             """SELECT g.channel_id, b.tip_round_id
                FROM games g
@@ -479,6 +484,7 @@ class Database:
             RuntimeError: 如果数据库未连接
         """
         await self._ensure_conn_or_raise()
+        assert self.conn is not None
         async with self.conn.execute(
             "SELECT * FROM rounds WHERE round_id = ?", (round_id,)
         ) as cursor:
@@ -544,6 +550,7 @@ class Database:
             RuntimeError: 如果数据库未连接
         """
         await self._ensure_conn_or_raise()
+        assert self.conn is not None
         async with self.conn.execute(
             "SELECT game_id, channel_id, host_user_id, created_at, updated_at FROM games"
         ) as cursor:
@@ -563,6 +570,7 @@ class Database:
             RuntimeError: 如果数据库未连接
         """
         await self._ensure_conn_or_raise()
+        assert self.conn is not None
         async with self.conn.execute(
             "SELECT * FROM branches WHERE game_id = ?", (game_id,)
         ) as cursor:
@@ -583,6 +591,7 @@ class Database:
             RuntimeError: 如果数据库未连接
         """
         await self._ensure_conn_or_raise()
+        assert self.conn is not None
         async with self.conn.execute(
             "SELECT * FROM branches WHERE game_id = ? AND name = ?",
             (game_id, branch_name),
@@ -603,6 +612,7 @@ class Database:
             RuntimeError: 如果数据库未连接
         """
         await self._ensure_conn_or_raise()
+        assert self.conn is not None
         async with self.conn.execute(
             "SELECT * FROM branches WHERE branch_id = ?",
             (branch_id,),
@@ -623,6 +633,7 @@ class Database:
             RuntimeError: 如果数据库未连接
         """
         await self._ensure_conn_or_raise()
+        assert self.conn is not None
         async with self.conn.execute(
             "SELECT round_id, parent_id FROM rounds WHERE game_id = ?", (game_id,)
         ) as cursor:
@@ -657,6 +668,7 @@ class Database:
             RuntimeError: 如果数据库未连接
         """
         await self._ensure_conn_or_raise()
+        assert self.conn is not None
         async with self.conn.execute(
             "SELECT * FROM tags WHERE game_id = ? AND name = ?",
             (game_id, name),
@@ -677,6 +689,7 @@ class Database:
             RuntimeError: 如果数据库未连接
         """
         await self._ensure_conn_or_raise()
+        assert self.conn is not None
         async with self.conn.execute(
             "SELECT * FROM tags WHERE game_id = ?", (game_id,)
         ) as cursor:
@@ -746,6 +759,7 @@ class Database:
             RuntimeError: 如果数据库未连接
         """
         await self._ensure_conn_or_raise()
+        assert self.conn is not None
         
         # 使用递归 CTE 一次性获取所有祖先
         query = """
