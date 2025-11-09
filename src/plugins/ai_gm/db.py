@@ -94,6 +94,22 @@ class Database:
             """
             )
 
+            # 创建 tags 表
+            await cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tags (
+                    tag_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    game_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    round_id INTEGER NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(game_id, name),
+                    FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE,
+                    FOREIGN KEY (round_id) REFERENCES rounds (round_id) ON DELETE CASCADE
+                );
+                """
+            )
+
             # 创建触发器，用于自动更新 games 表的 updated_at
             await cursor.execute(
                 """
@@ -132,6 +148,12 @@ class Database:
             )
             await cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_rounds_parent ON rounds(parent_id);"
+            )
+            await cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tags_game ON tags(game_id);"
+            )
+            await cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tags_round_id ON tags(round_id);"
             )
 
         if self.conn:
@@ -349,6 +371,25 @@ class Database:
                     (round_id, branch_id),
                 )
 
+    async def rename_branch(self, branch_id: int, new_name: str):
+        """重命名分支"""
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+        async with self.transaction():
+            async with self.conn.cursor() as cursor:
+                await cursor.execute(
+                    "UPDATE branches SET name = ? WHERE branch_id = ?",
+                    (new_name, branch_id),
+                )
+
+    async def delete_branch(self, branch_id: int):
+        """删除分支"""
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+        async with self.transaction():
+            async with self.conn.cursor() as cursor:
+                await cursor.execute("DELETE FROM branches WHERE branch_id = ?", (branch_id,))
+
     async def delete_game(self, game_id: int):
         """删除游戏"""
         if not self.conn:
@@ -402,6 +443,49 @@ class Database:
         async with self.conn.cursor() as cursor:
             await cursor.execute("SELECT round_id, parent_id FROM rounds WHERE game_id = ?", (game_id,))
             return await cursor.fetchall()
+
+    async def create_tag(self, game_id: int, name: str, round_id: int) -> int:
+        """创建新标签并返回 tag_id"""
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+        async with self.transaction():
+            async with self.conn.cursor() as cursor:
+                await cursor.execute(
+                    "INSERT INTO tags (game_id, name, round_id) VALUES (?, ?, ?)",
+                    (game_id, name, round_id),
+                )
+                if cursor.lastrowid is None:
+                    raise RuntimeError("插入标签数据失败")
+                return cursor.lastrowid
+
+    async def get_tag_by_name(self, game_id: int, name: str):
+        """通过名称获取标签信息"""
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+        async with self.conn.cursor() as cursor:
+            await cursor.execute(
+                "SELECT * FROM tags WHERE game_id = ? AND name = ?",
+                (game_id, name),
+            )
+            return await cursor.fetchone()
+
+    async def get_all_tags_for_game(self, game_id: int):
+        """获取指定游戏的所有标签信息"""
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+        async with self.conn.cursor() as cursor:
+            await cursor.execute("SELECT * FROM tags WHERE game_id = ?", (game_id,))
+            return await cursor.fetchall()
+
+    async def delete_tag(self, game_id: int, name: str):
+        """删除标签"""
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+        async with self.transaction():
+            async with self.conn.cursor() as cursor:
+                await cursor.execute(
+                    "DELETE FROM tags WHERE game_id = ? AND name = ?", (game_id, name)
+                )
 
     async def attach_game_to_channel(self, game_id: int, channel_id: str):
         """将游戏附加到频道"""

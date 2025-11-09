@@ -1,6 +1,7 @@
 import graphviz
 from ncatbot.utils import get_log
 from .db import Database
+import html
 
 LOG = get_log(__name__)
 
@@ -18,6 +19,7 @@ class Visualizer:
 
             all_rounds = await self.db.get_all_rounds_for_game(game_id)
             all_branches = await self.db.get_all_branches_for_game(game_id)
+            all_tags = await self.db.get_all_tags_for_game(game_id)
             head_branch_id = game["head_branch_id"]
 
             if not all_rounds:
@@ -42,30 +44,59 @@ class Visualizer:
             # 2. 识别关键节点
             key_nodes = {root_node}
             branch_tips = {b["tip_round_id"]: (b["name"], b["branch_id"]) for b in all_branches}
+            tags_by_round = {}
+            for tag in all_tags:
+                tags_by_round.setdefault(tag["round_id"], []).append(tag["name"])
+
             key_nodes.update(branch_tips.keys())
+            key_nodes.update(tags_by_round.keys())
             
             fork_points = {node for node, children in adj.items() if len(children) > 1}
             key_nodes.update(fork_points)
 
             # 3. 构建简化图
             dot = graphviz.Digraph(comment=f'Game {game_id} Branch Graph')
-            dot.attr('node', shape='box', style='rounded')
+            dot.attr('node', shape='plaintext') # 使用 plaintext 以支持 HTML-like labels
             dot.attr(bgcolor='transparent', rankdir='LR')
 
             processed_nodes = set()
 
-            for tip_id, (branch_name, branch_id) in branch_tips.items():
-                # 设置分支节点的样式
-                is_head = (branch_id == head_branch_id)
-                color = 'green' if is_head else 'white'
-                fontcolor = 'black' if not is_head else 'white'
-                style = 'rounded,filled' if is_head else 'rounded'
-                label = f"{branch_name} (HEAD)" if is_head else branch_name
-                dot.node(str(tip_id), label, color=color, fontcolor=fontcolor, style=style)
+            # 3.1 绘制所有关键节点
+            for node_id in key_nodes:
+                if node_id in processed_nodes:
+                    continue
 
-                # 向上回溯
+                label_parts = [f'<b>Round {node_id}</b>']
+                if node_id == root_node:
+                    label_parts = ['<b>Initial</b>']
+                
+                # 添加分支信息
+                node_branches = [b for b in all_branches if b['tip_round_id'] == node_id]
+                for branch in node_branches:
+                    is_head = (branch['branch_id'] == head_branch_id)
+                    branch_name_escaped = html.escape(branch['name'])
+                    branch_label = f"{branch_name_escaped} (HEAD)" if is_head else branch_name_escaped
+                    label_parts.append(f'🌿 {branch_label}')
+
+                # 添加标签信息
+                if node_id in tags_by_round:
+                    for tag_name in tags_by_round[node_id]:
+                        label_parts.append(f'🏷️ {html.escape(tag_name)}')
+
+                # 使用 HTML-like label
+                html_label = '<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4"><TR><TD>{}</TD></TR></TABLE>>'.format(
+                    '<BR/>'.join(label_parts)
+                )
+                dot.node(str(node_id), label=html_label)
+                processed_nodes.add(node_id)
+
+            # 3.2 向上回溯绘制边
+            for node_id in key_nodes:
+                if node_id == root_node:
+                    continue
+                
                 path_len = 0
-                curr = tip_id
+                curr = node_id
                 while curr in parent_map and curr != root_node:
                     parent = parent_map[curr]
                     path_len += 1
@@ -75,22 +106,6 @@ class Visualizer:
                         dot.edge(str(parent), str(curr), label=edge_label)
                         break
                     curr = parent
-
-            # 4. 单独处理其他关键节点（分叉点和根节点）
-            for node_id in key_nodes:
-                if node_id in processed_nodes:
-                    continue
-                
-                label = f"Round {node_id}"
-                if node_id == root_node:
-                    label = "Initial"
-                elif node_id in fork_points:
-                    label = f"Fork Point\n(Round {node_id})"
-
-                if node_id not in branch_tips: # 避免覆盖分支节点的自定义样式
-                     dot.node(str(node_id), label)
-                
-                processed_nodes.add(node_id)
 
             # 渲染为 PNG 字节
             return dot.pipe(format='png')
@@ -108,38 +123,45 @@ class Visualizer:
 
             all_rounds = await self.db.get_all_rounds_for_game(game_id)
             all_branches = await self.db.get_all_branches_for_game(game_id)
+            all_tags = await self.db.get_all_tags_for_game(game_id)
             head_branch_id = game["head_branch_id"]
 
             if not all_rounds:
                 return None
 
             dot = graphviz.Digraph(comment=f'Game {game_id} Full Branch Graph')
-            dot.attr('node', shape='box', style='rounded')
+            dot.attr('node', shape='plaintext')
             dot.attr(bgcolor='transparent', rankdir='LR')
 
-            branch_tips = {b["tip_round_id"]: (b["name"], b["branch_id"]) for b in all_branches}
+            tags_by_round = {}
+            for tag in all_tags:
+                tags_by_round.setdefault(tag["round_id"], []).append(tag["name"])
 
             # 1. 添加所有 round 节点
-            nodes_with_parent = {r['round_id'] for r in all_rounds if r['parent_id'] != -1}
-            root_node_id = next((r['round_id'] for r in all_rounds if r['round_id'] not in nodes_with_parent), None)
-
             for r in all_rounds:
                 round_id = r["round_id"]
-                label = f"Round {round_id}"
                 
-                # 检查是否是某个分支的 tip
-                if round_id in branch_tips:
-                    branch_name, branch_id = branch_tips[round_id]
-                    is_head = (branch_id == head_branch_id)
-                    color = 'green' if is_head else 'lightblue'
-                    fontcolor = 'white' if is_head else 'black'
-                    style = 'rounded,filled'
-                    branch_label = f"{branch_name} (HEAD)" if is_head else f"{branch_name}"
-                    dot.node(str(round_id), f"{branch_label}\n(Round {round_id})", color=color, fontcolor=fontcolor, style=style)
-                elif round_id == root_node_id:
-                    dot.node(str(round_id), f"Initial\n(Round {round_id})", shape='ellipse')
-                else:
-                    dot.node(str(round_id), label)
+                label_parts = [f'<b>Round {round_id}</b>']
+                if r['parent_id'] == -1:
+                    label_parts = [f'<b>Initial (Round {round_id})</b>']
+
+                # 添加分支信息
+                node_branches = [b for b in all_branches if b['tip_round_id'] == round_id]
+                for branch in node_branches:
+                    is_head = (branch['branch_id'] == head_branch_id)
+                    branch_name_escaped = html.escape(branch['name'])
+                    branch_label = f"{branch_name_escaped} (HEAD)" if is_head else branch_name_escaped
+                    label_parts.append(f'🌿 {branch_label}')
+
+                # 添加标签信息
+                if round_id in tags_by_round:
+                    for tag_name in tags_by_round[round_id]:
+                        label_parts.append(f'🏷️ {html.escape(tag_name)}')
+                
+                html_label = '<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4"><TR><TD>{}</TD></TR></TABLE>>'.format(
+                    '<BR/>'.join(label_parts)
+                )
+                dot.node(str(round_id), label=html_label)
 
             # 2. 添加所有边
             for r in all_rounds:

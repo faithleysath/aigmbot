@@ -32,7 +32,14 @@ class GameManager:
         self.content_fetcher = content_fetcher
 
     async def start_new_game(self, group_id: str, user_id: str, system_prompt: str):
-        """开始一个新游戏"""
+        """
+        开始一个新游戏。
+
+        Args:
+            group_id: 游戏所在的群组ID。
+            user_id: 游戏的发起者（主持人）ID。
+            system_prompt: 游戏的系统提示词。
+        """
         if not self.db or not self.db.conn or not self.llm_api:
             await self.api.post_group_msg(
                 group_id, text="❌ 插件未完全初始化，无法开始游戏。"
@@ -88,7 +95,14 @@ class GameManager:
                 LOG.info(f"已清理失败的游戏记录，ID: {game_id}。")
 
     async def checkout_head(self, game_id: int):
-        """检出游戏 head 指向的分支的最新回合，并向玩家展示"""
+        """
+        检出并显示游戏的HEAD分支的最新状态。
+
+        这包括渲染最新回合的内容作为图片，发送到频道，并更新主消息ID。
+
+        Args:
+            game_id: 要检出的游戏ID。
+        """
         if not self.db or not self.db.conn or not self.renderer or not self.cache_manager:
             LOG.error(f"检出 head 失败：组件未初始化。")
             return
@@ -198,7 +212,14 @@ class GameManager:
         return messages
 
     async def tally_and_advance(self, game_id: int, scores: dict, result_lines: list[str]):
-        """计票并推进游戏到下一回合"""
+        """
+        根据投票结果计票，并推进游戏到下一回合。
+
+        Args:
+            game_id: 游戏ID。
+            scores: 包含各选项得分的字典。
+            result_lines: 用于向用户展示的投票结果文本行。
+        """
         if not self.db or not self.db.conn or not self.llm_api:
             return
 
@@ -329,7 +350,12 @@ class GameManager:
                 await self.db.set_game_frozen_status(game_id, False)
 
     async def revert_last_round(self, game_id: int):
-        """将游戏回退到上一轮"""
+        """
+        将当前HEAD分支回退到上一回合。
+
+        Args:
+            game_id: 游戏ID。
+        """
         if not self.db or not self.db.conn:
             return
 
@@ -381,3 +407,123 @@ class GameManager:
             LOG.error(f"回退游戏 (game_id: {game_id}) 时出错: {e}", exc_info=True)
             if channel_id:
                 await self.api.post_group_msg(str(channel_id), text=f"❌ 回退失败: {e}")
+
+    async def create_new_branch(
+        self, game_id: int, new_branch_name: str, from_round_id: int | None = None
+    ):
+        """
+        从指定回合创建新分支。
+
+        Args:
+            game_id: 游戏ID。
+            new_branch_name: 新分支的名称。
+            from_round_id: 从哪个回合创建分支，如果为None，则从当前HEAD分支的顶端创建。
+        
+        Raises:
+            ValueError: 如果游戏或目标回合不存在。
+        """
+        if not self.db:
+            return
+        channel_id = None
+        try:
+            game = await self.db.get_game_by_game_id(game_id)
+            if not game:
+                raise ValueError(f"找不到游戏 {game_id}")
+            channel_id = game["channel_id"]
+
+            target_round_id = from_round_id
+            if target_round_id is None:
+                # 默认为当前 HEAD 指向的回合
+                head_info = await self.db.get_game_and_head_branch_info(game_id)
+                target_round_id = head_info["tip_round_id"]
+
+            if not await self.db.get_round_info(target_round_id):
+                raise ValueError(f"目标回合 {target_round_id} 不存在")
+
+            await self.db.create_branch(game_id, new_branch_name, target_round_id)
+            LOG.info(f"游戏 {game_id} 从 round {target_round_id} 创建了新分支 '{new_branch_name}'")
+            if channel_id:
+                await self.api.post_group_msg(
+                    str(channel_id),
+                    text=f"🌿 已从回合 {target_round_id} 创建新分支: {new_branch_name}",
+                )
+        except Exception as e:
+            LOG.error(f"创建新分支失败: {e}", exc_info=True)
+            if channel_id:
+                await self.api.post_group_msg(str(channel_id), text=f"❌ 创建分支失败: {e}")
+
+    async def switch_branch(self, game_id: int, branch_name: str):
+        """
+        切换游戏的HEAD分支。
+
+        Args:
+            game_id: 游戏ID。
+            branch_name: 要切换到的目标分支名称。
+
+        Raises:
+            ValueError: 如果游戏或分支不存在。
+        """
+        if not self.db:
+            return
+        channel_id = None
+        try:
+            game = await self.db.get_game_by_game_id(game_id)
+            if not game:
+                raise ValueError(f"找不到游戏 {game_id}")
+            channel_id = game["channel_id"]
+
+            branch = await self.db.get_branch_by_name(game_id, branch_name)
+            if not branch:
+                raise ValueError(f"找不到名为 '{branch_name}' 的分支")
+
+            await self.db.update_game_head_branch(game_id, branch["branch_id"])
+            LOG.info(f"游戏 {game_id} 的 HEAD 已切换到分支 '{branch_name}'")
+
+            if channel_id:
+                await self.api.post_group_msg(
+                    str(channel_id), text=f"✅ 已切换到分支: {branch_name}。正在加载最新状态..."
+                )
+                await self.checkout_head(game_id)
+
+        except Exception as e:
+            LOG.error(f"切换分支失败: {e}", exc_info=True)
+            if channel_id:
+                await self.api.post_group_msg(str(channel_id), text=f"❌ 切换分支失败: {e}")
+
+    async def reset_current_branch(self, game_id: int, round_id: int):
+        """
+        将当前HEAD分支硬重置到指定的历史回合。
+
+        Args:
+            game_id: 游戏ID。
+            round_id: 要重置到的目标回合ID。
+
+        Raises:
+            ValueError: 如果游戏或目标回合不存在。
+        """
+        if not self.db:
+            return
+        channel_id = None
+        try:
+            game = await self.db.get_game_by_game_id(game_id)
+            if not game:
+                raise ValueError(f"找不到游戏 {game_id}")
+            channel_id = game["channel_id"]
+            head_branch_id = game["head_branch_id"]
+
+            if not await self.db.get_round_info(round_id):
+                raise ValueError(f"目标回合 {round_id} 不存在")
+
+            await self.db.update_branch_tip(head_branch_id, round_id)
+            LOG.info(f"游戏 {game_id} 的 HEAD 分支已重置到 round {round_id}")
+
+            if channel_id:
+                await self.api.post_group_msg(
+                    str(channel_id), text=f"⏪ 当前分支已重置到回合 {round_id}。正在加载..."
+                )
+                await self.checkout_head(game_id)
+
+        except Exception as e:
+            LOG.error(f"重置分支失败: {e}", exc_info=True)
+            if channel_id:
+                await self.api.post_group_msg(str(channel_id), text=f"❌ 重置分支失败: {e}")

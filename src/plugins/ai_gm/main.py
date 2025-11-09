@@ -180,6 +180,53 @@ class AIGMPlugin(NcatBotPlugin):
         if self.command_handler:
             await self.command_handler.handle_branch_history(event, branch_name, limit)
 
+    @branch_group.command("create", description="创建新分支")
+    async def aigm_branch_create(
+        self, event: GroupMessageEvent, name: str, from_round_id: int | None = None
+    ):
+        if self.command_handler:
+            await self.command_handler.handle_branch_create(event, name, from_round_id)
+
+    @branch_group.command("rename", description="重命名分支")
+    async def aigm_branch_rename(self, event: GroupMessageEvent, old_name: str, new_name: str):
+        if self.command_handler:
+            await self.command_handler.handle_branch_rename(event, old_name, new_name)
+
+    @branch_group.command("delete", description="删除分支")
+    async def aigm_branch_delete(self, event: GroupMessageEvent, name: str):
+        if self.command_handler:
+            await self.command_handler.handle_branch_delete(event, name)
+
+    # --- Tag Subcommands ---
+    tag_group = aigm_group.group("tag", description="标签管理")
+
+    @tag_group.command("create", description="创建新标签")
+    async def aigm_tag_create(
+        self, event: GroupMessageEvent, name: str, round_id: int | None = None
+    ):
+        if self.command_handler:
+            await self.command_handler.handle_tag_create(event, name, round_id)
+
+    @tag_group.command("list", description="列出所有标签")
+    async def aigm_tag_list(self, event: GroupMessageEvent):
+        if self.command_handler:
+            await self.command_handler.handle_tag_list(event)
+
+    @tag_group.command("show", description="查看标签指向的回合")
+    async def aigm_tag_show(self, event: GroupMessageEvent, name: str):
+        if self.command_handler:
+            await self.command_handler.handle_tag_show(event, name)
+
+    @tag_group.command("history", description="查看标签指向的回合的历史记录")
+    async def aigm_tag_history(self, event: GroupMessageEvent, name: str, limit: int = 10):
+        if self.command_handler:
+            await self.command_handler.handle_tag_history(event, name, limit)
+
+    @tag_group.command("delete", description="删除标签")
+    async def aigm_tag_delete(self, event: GroupMessageEvent, name: str):
+        if self.command_handler:
+            await self.command_handler.handle_tag_delete(event, name)
+
     # --- Round Subcommands ---
     round_group = aigm_group.group("round", description="回合管理")
 
@@ -234,6 +281,16 @@ class AIGMPlugin(NcatBotPlugin):
     async def aigm_checkout_head(self, event: GroupMessageEvent):
         if self.command_handler:
             await self.command_handler.handle_checkout_head(event)
+
+    @aigm_group.command("checkout", aliases=["co"], description="切换到指定分支")
+    async def aigm_checkout(self, event: GroupMessageEvent, branch_name: str):
+        if self.command_handler:
+            await self.command_handler.handle_checkout(event, branch_name)
+
+    @aigm_group.command("reset", description="将当前分支重置到指定回合")
+    async def aigm_reset(self, event: GroupMessageEvent, round_id: int):
+        if self.command_handler:
+            await self.command_handler.handle_reset(event, round_id)
 
     # --- Admin Subcommands ---
     admin_group = aigm_group.group("admin", description="管理员命令")

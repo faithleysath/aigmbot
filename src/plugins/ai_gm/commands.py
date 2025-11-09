@@ -6,6 +6,7 @@ from ncatbot.core.helper.forward_constructor import ForwardConstructor
 from ncatbot.core.api import BotAPI
 from ncatbot.utils import get_log
 import json
+import re
 
 from .db import Database
 from .game_manager import GameManager
@@ -16,8 +17,19 @@ from .utils import bytes_to_base64
 
 LOG = get_log(__name__)
 
+HISTORY_MAX_LIMIT = 10
+
 
 class CommandHandler:
+    async def _validate_name(self, name: str) -> bool:
+        """验证分支或标签名称的格式"""
+        if not name or len(name) > 50:
+            return False
+        # 允许字母、数字、下划线和连字符
+        if not re.match(r"^[a-zA-Z0-9_-]+$", name):
+            return False
+        return True
+
     def __init__(
         self,
         plugin: NcatBotPlugin,
@@ -60,20 +72,39 @@ class CommandHandler:
         help_text = """
 /aigm help - 显示此帮助信息
 /aigm status - 查看当前群组的游戏状态
+
+游戏管理:
 /aigm game list - 列出所有游戏
 /aigm game attach <id> - [主持人/管理员] 将游戏附加到当前频道
 /aigm game detach - [主持人/管理员] 从当前频道分离游戏
 /aigm game sethost @user - [主持人/管理员] 变更当前频道游戏的主持人
 /aigm game sethost-by-id <id> @user - [主持人/管理员] 变更指定ID游戏的主持人
-/aigm checkout head - [主持人/管理员] 重新加载并显示当前游戏的最新状态
+
+分支操作:
+/aigm branch list [all] - 可视化显示分支图（all显示完整图）
+/aigm branch show <name> - 查看指定分支顶端的内容
+/aigm branch history [name] [limit=N] - 查看指定分支的历史记录
+/aigm branch create <name> [from_round_id] - [主持人/管理员] 创建新分支
+/aigm branch rename <old> <new> - [主持人/管理员] 重命名分支
+/aigm branch delete <name> - [主持人/管理员] 删除分支
+
+标签操作:
+/aigm tag list - 列出所有标签
+/aigm tag show <name> - 查看标签指向的回合内容
+/aigm tag history <name> [limit=N] - 查看标签指向的回合的历史记录
+/aigm tag create <name> [round_id] - [主持人/管理员] 创建新标签
+/aigm tag delete <name> - [主持人/管理员] 删除标签
+
+历史与状态控制:
+/aigm checkout <branch_name> - [主持人/管理员] 切换到指定分支
+/aigm checkout head - [主持人/管理员] 重新加载并显示最新状态
+/aigm reset <round_id> - [主持人/管理员] 将当前分支重置到指定回合
+/aigm round show <id> - 查看指定回合的内容
+/aigm round history <id> [limit=N] - 查看指定回合及其历史记录
+
+管理员命令:
 /aigm admin unfreeze - [群管理/ROOT] 强制解冻当前游戏
 /aigm admin delete <id> - [ROOT] 删除指定ID的游戏
-/aigm branch list - 可视化显示当前游戏的分支图（简化）
-/aigm branch list all - 可视化显示当前游戏的完整分支图
-/aigm branch show <branch_name> - 查看指定分支顶端的内容
-/aigm branch history [branch_name] [limit=N] - 查看指定分支的历史记录（默认为HEAD）
-/aigm round show <round_id> - 查看指定回合的内容
-/aigm round history <round_id> [limit=N] - 查看指定回合及其历史记录
         """
         await event.reply(help_text.strip(), at=False)
 
@@ -124,7 +155,7 @@ class CommandHandler:
         else:
             await event.reply("生成分支图失败，请检查日志。", at=False)
 
-    async def handle_branch_history(self, event: GroupMessageEvent, branch_name: str | None = None, limit: int = 10):
+    async def handle_branch_history(self, event: GroupMessageEvent, branch_name: str | None = None, limit: int = HISTORY_MAX_LIMIT):
         """处理 /aigm branch history [name] [limit] 命令"""
         game = await self.db.get_game_by_channel_id(str(event.group_id))
         if not game:
@@ -207,16 +238,16 @@ class CommandHandler:
             return
         await self._show_round_content(event, round_id)
 
-    async def handle_round_history(self, event: GroupMessageEvent, round_id: int, limit: int = 10):
+    async def handle_round_history(self, event: GroupMessageEvent, round_id: int, limit: int = HISTORY_MAX_LIMIT):
         """处理 /aigm round history <id> [limit] 命令，并将每轮渲染到一张图片中"""
         game = await self.db.get_game_by_channel_id(str(event.group_id))
         if not game:
             await event.reply("当前群组没有正在进行的游戏。", at=False)
             return
 
-        if limit > 10:
-            limit = 10
-            await event.reply("为了防止消息刷屏和性能问题，历史记录上限设置为10条。", at=False)
+        if limit > HISTORY_MAX_LIMIT:
+            limit = HISTORY_MAX_LIMIT
+            await event.reply(f"为了防止消息刷屏和性能问题，历史记录上限设置为{HISTORY_MAX_LIMIT}条。", at=False)
 
         await event.reply(f"正在生成 round {round_id} 的历史记录（最多{limit}条），请稍候...", at=False)
 
@@ -284,6 +315,108 @@ class CommandHandler:
             return
 
         await self._show_round_content(event, branch['tip_round_id'])
+
+    async def handle_branch_create(
+        self, event: GroupMessageEvent, name: str, from_round_id: int | None = None
+    ):
+        """处理 /aigm branch create 命令"""
+        user_id = str(event.user_id)
+        group_id = str(event.group_id)
+        if not await self._is_authorized_for_channel_action(
+            user_id, group_id, event.sender.role
+        ):
+            await event.reply("权限不足。", at=False)
+            return
+
+        game = await self.db.get_game_by_channel_id(group_id)
+        if not game:
+            await event.reply("当前频道没有正在进行的游戏。", at=False)
+            return
+
+        if not await self._validate_name(name):
+            await event.reply("❌ 无效的分支名称。名称长度应在1-50之间，且只能包含字母、数字、下划线和连字符。", at=False)
+            return
+
+        # 检查分支名是否已存在
+        existing_branch = await self.db.get_branch_by_name(game["game_id"], name)
+        if existing_branch:
+            await event.reply(f"❌ 分支 '{name}' 已存在。", at=False)
+            return
+
+        await self.game_manager.create_new_branch(game["game_id"], name, from_round_id)
+
+    async def handle_branch_rename(
+        self, event: GroupMessageEvent, old_name: str, new_name: str
+    ):
+        """处理 /aigm branch rename 命令"""
+        user_id = str(event.user_id)
+        group_id = str(event.group_id)
+        if not await self._is_authorized_for_channel_action(
+            user_id, group_id, event.sender.role
+        ):
+            await event.reply("权限不足。", at=False)
+            return
+
+        game = await self.db.get_game_by_channel_id(group_id)
+        if not game:
+            await event.reply("当前频道没有正在进行的游戏。", at=False)
+            return
+
+        if not await self._validate_name(new_name):
+            await event.reply("❌ 无效的分支名称。名称长度应在1-50之间，且只能包含字母、数字、下划线和连字符。", at=False)
+            return
+
+        branch = await self.db.get_branch_by_name(game["game_id"], old_name)
+        if not branch:
+            await event.reply(f"找不到名为 '{old_name}' 的分支。", at=False)
+            return
+
+        # 检查新名称是否已存在
+        existing_branch = await self.db.get_branch_by_name(game["game_id"], new_name)
+        if existing_branch:
+            await event.reply(f"❌ 分支名 '{new_name}' 已被占用。", at=False)
+            return
+
+        await self.db.rename_branch(branch["branch_id"], new_name)
+        await event.reply(f"✅ 分支 '{old_name}' 已成功重命名为 '{new_name}'。", at=False)
+
+    async def handle_branch_delete(self, event: GroupMessageEvent, name: str):
+        """处理 /aigm branch delete 命令"""
+        user_id = str(event.user_id)
+        group_id = str(event.group_id)
+        if not await self._is_authorized_for_channel_action(
+            user_id, group_id, event.sender.role
+        ):
+            await event.reply("权限不足。", at=False)
+            return
+
+        game = await self.db.get_game_by_channel_id(group_id)
+        if not game:
+            await event.reply("当前频道没有正在进行的游戏。", at=False)
+            return
+
+        branch = await self.db.get_branch_by_name(game["game_id"], name)
+        if not branch:
+            await event.reply(f"找不到名为 '{name}' 的分支。", at=False)
+            return
+
+        try:
+            async with self.db.transaction():
+                # 在事务内再次检查以防止竞态条件
+                current_game = await self.db.get_game_by_game_id(game["game_id"])
+                if not current_game:
+                    raise ValueError("游戏不存在")
+                if current_game["head_branch_id"] == branch["branch_id"]:
+                    raise ValueError("不能删除当前所在的 HEAD 分支。")
+                
+                await self.db.delete_branch(branch["branch_id"])
+            
+            await event.reply(f"✅ 已成功删除分支 '{name}'。", at=False)
+        except ValueError as e:
+            await event.reply(f"❌ 删除失败: {e}", at=False)
+        except Exception as e:
+            LOG.error(f"删除分支 '{name}' 时出现意外错误: {e}", exc_info=True)
+            await event.reply("❌ 删除分支时出现意外错误，请检查日志。", at=False)
 
     async def handle_game_list(self, event: GroupMessageEvent):
         """处理 /aigm game list 命令"""
@@ -418,6 +551,144 @@ class CommandHandler:
 
         game_id = game['game_id']
         await self.game_manager.checkout_head(game_id)
+
+    async def handle_checkout(self, event: GroupMessageEvent, branch_name: str):
+        """处理 /aigm checkout <branch> 命令"""
+        user_id = str(event.user_id)
+        group_id = str(event.group_id)
+        if not await self._is_authorized_for_channel_action(
+            user_id, group_id, event.sender.role
+        ):
+            await event.reply("权限不足。", at=False)
+            return
+
+        game = await self.db.get_game_by_channel_id(group_id)
+        if not game:
+            await event.reply("当前频道没有正在进行的游戏。", at=False)
+            return
+
+        await self.game_manager.switch_branch(game["game_id"], branch_name)
+
+    async def handle_reset(self, event: GroupMessageEvent, round_id: int):
+        """处理 /aigm reset <round_id> 命令"""
+        user_id = str(event.user_id)
+        group_id = str(event.group_id)
+        if not await self._is_authorized_for_channel_action(
+            user_id, group_id, event.sender.role
+        ):
+            await event.reply("权限不足。", at=False)
+            return
+
+        game = await self.db.get_game_by_channel_id(group_id)
+        if not game:
+            await event.reply("当前频道没有正在进行的游戏。", at=False)
+            return
+
+        await self.game_manager.reset_current_branch(game["game_id"], round_id)
+
+    async def handle_tag_create(
+        self, event: GroupMessageEvent, name: str, round_id: int | None = None
+    ):
+        """处理 /aigm tag create 命令"""
+        user_id = str(event.user_id)
+        group_id = str(event.group_id)
+        if not await self._is_authorized_for_channel_action(
+            user_id, group_id, event.sender.role
+        ):
+            await event.reply("权限不足。", at=False)
+            return
+
+        game = await self.db.get_game_by_channel_id(group_id)
+        if not game:
+            await event.reply("当前频道没有正在进行的游戏。", at=False)
+            return
+
+        target_round_id = round_id
+        if target_round_id is None:
+            head_info = await self.db.get_game_and_head_branch_info(game["game_id"])
+            target_round_id = head_info["tip_round_id"]
+
+        if not await self._validate_name(name):
+            await event.reply("❌ 无效的标签名称。名称长度应在1-50之间，且只能包含字母、数字、下划线和连字符。", at=False)
+            return
+
+        if not await self.db.get_round_info(target_round_id):
+            await event.reply(f"找不到回合 {target_round_id}。", at=False)
+            return
+
+        # 检查标签名是否已存在
+        existing_tag = await self.db.get_tag_by_name(game["game_id"], name)
+        if existing_tag:
+            await event.reply(f"❌ 标签 '{name}' 已存在。", at=False)
+            return
+
+        await self.db.create_tag(game["game_id"], name, target_round_id)
+        await event.reply(f"🏷️ 已在回合 {target_round_id} 创建标签 '{name}'。", at=False)
+
+    async def handle_tag_list(self, event: GroupMessageEvent):
+        """处理 /aigm tag list 命令"""
+        game = await self.db.get_game_by_channel_id(str(event.group_id))
+        if not game:
+            await event.reply("当前频道没有正在进行的游戏。", at=False)
+            return
+
+        tags = await self.db.get_all_tags_for_game(game["game_id"])
+        if not tags:
+            await event.reply("当前游戏还没有任何标签。", at=False)
+            return
+
+        tag_list_text = "标签列表:\n"
+        for tag in tags:
+            tag_list_text += f"- {tag['name']} -> (Round {tag['round_id']})\n"
+        await event.reply(tag_list_text.strip(), at=False)
+
+    async def handle_tag_show(self, event: GroupMessageEvent, name: str):
+        """处理 /aigm tag show 命令"""
+        game = await self.db.get_game_by_channel_id(str(event.group_id))
+        if not game:
+            await event.reply("当前频道没有正在进行的游戏。", at=False)
+            return
+
+        tag = await self.db.get_tag_by_name(game["game_id"], name)
+        if not tag:
+            await event.reply(f"找不到名为 '{name}' 的标签。", at=False)
+            return
+
+        await self._show_round_content(event, tag["round_id"])
+
+    async def handle_tag_history(
+        self, event: GroupMessageEvent, name: str, limit: int = HISTORY_MAX_LIMIT
+    ):
+        """处理 /aigm tag history 命令"""
+        game = await self.db.get_game_by_channel_id(str(event.group_id))
+        if not game:
+            await event.reply("当前频道没有正在进行的游戏。", at=False)
+            return
+
+        tag = await self.db.get_tag_by_name(game["game_id"], name)
+        if not tag:
+            await event.reply(f"找不到名为 '{name}' 的标签。", at=False)
+            return
+
+        await self.handle_round_history(event, tag["round_id"], limit)
+
+    async def handle_tag_delete(self, event: GroupMessageEvent, name: str):
+        """处理 /aigm tag delete 命令"""
+        user_id = str(event.user_id)
+        group_id = str(event.group_id)
+        if not await self._is_authorized_for_channel_action(
+            user_id, group_id, event.sender.role
+        ):
+            await event.reply("权限不足。", at=False)
+            return
+
+        game = await self.db.get_game_by_channel_id(group_id)
+        if not game:
+            await event.reply("当前频道没有正在进行的游戏。", at=False)
+            return
+
+        await self.db.delete_tag(game["game_id"], name)
+        await event.reply(f"✅ 已成功删除标签 '{name}'。", at=False)
 
     async def handle_cache_pending_clear(self, event: GroupMessageEvent):
         """处理 /aigm cache pending clear 命令"""
