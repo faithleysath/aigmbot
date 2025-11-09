@@ -8,7 +8,6 @@ from ncatbot.core.event import GroupMessageEvent, NoticeEvent
 from ncatbot.core.event.message_segment import At
 from ncatbot.utils import get_log
 from pathlib import Path
-from typing import Union
 
 from .db import Database
 from .llm_api import LLM_API
@@ -108,6 +107,7 @@ class AIGMPlugin(NcatBotPlugin):
                 self.game_manager,
                 self.cache_manager,
                 self.visualizer,
+                self.renderer,
             )
         else:
             LOG.error(f"[{self.name}] 部分组件初始化失败，插件功能可能不完整。")
@@ -169,6 +169,19 @@ class AIGMPlugin(NcatBotPlugin):
     async def aigm_branch_list_all(self, event: GroupMessageEvent):
         if self.command_handler:
             await self.command_handler.handle_branch_list_all(event)
+
+    @branch_group.command("show", description="查看指定分支顶端的内容")
+    async def aigm_branch_show(self, event: GroupMessageEvent, branch_name: str):
+        if self.command_handler:
+            await self.command_handler.handle_branch_show(event, branch_name)
+
+    # --- Round Subcommands ---
+    round_group = aigm_group.group("round", description="回合管理")
+
+    @round_group.command("show", description="查看指定回合的内容")
+    async def aigm_round_show(self, event: GroupMessageEvent, round_id: int):
+        if self.command_handler:
+            await self.command_handler.handle_round_show(event, round_id)
 
     # --- Game Subcommands ---
     game_group = aigm_group.group("game", description="游戏管理")

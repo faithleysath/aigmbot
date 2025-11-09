@@ -373,6 +373,17 @@ class Database:
             await cursor.execute("SELECT * FROM branches WHERE game_id = ?", (game_id,))
             return await cursor.fetchall()
 
+    async def get_branch_by_name(self, game_id: int, branch_name: str):
+        """通过名称获取指定游戏的分支信息"""
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+        async with self.conn.cursor() as cursor:
+            await cursor.execute(
+                "SELECT * FROM branches WHERE game_id = ? AND name = ?",
+                (game_id, branch_name),
+            )
+            return await cursor.fetchone()
+
     async def get_all_rounds_for_game(self, game_id: int):
         """获取指定游戏的所有回合信息"""
         if not self.conn:

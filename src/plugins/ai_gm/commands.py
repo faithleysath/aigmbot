@@ -9,6 +9,7 @@ from .db import Database
 from .game_manager import GameManager
 from .cache import CacheManager
 from .visualizer import Visualizer
+from .renderer import MarkdownRenderer
 from .utils import bytes_to_base64
 
 LOG = get_log(__name__)
@@ -22,6 +23,7 @@ class CommandHandler:
         game_manager: GameManager,
         cache_manager: CacheManager,
         visualizer: Visualizer,
+        renderer: MarkdownRenderer,
     ):
         self.plugin = plugin
         self.api = plugin.api
@@ -29,6 +31,7 @@ class CommandHandler:
         self.game_manager = game_manager
         self.cache_manager = cache_manager
         self.visualizer = visualizer
+        self.renderer = renderer
         self.rbac_manager = plugin.rbac_manager
 
     async def _is_authorized_for_channel_action(
@@ -65,6 +68,8 @@ class CommandHandler:
 /aigm admin delete <id> - [ROOT] 删除指定ID的游戏
 /aigm branch list - 可视化显示当前游戏的分支图（简化）
 /aigm branch list all - 可视化显示当前游戏的完整分支图
+/aigm branch show <branch_name> - 查看指定分支顶端的内容
+/aigm round show <round_id> - 查看指定回合的内容
         """
         await event.reply(help_text.strip(), at=False)
 
@@ -136,6 +141,51 @@ class CommandHandler:
             )
         else:
             await event.reply("生成完整分支图失败，请检查日志。", at=False)
+
+    async def _show_round_content(self, event: GroupMessageEvent, round_id: int):
+        """根据 round_id 显示其内容的通用函数"""
+        round_info = await self.db.get_round_info(round_id)
+        if not round_info:
+            await event.reply(f"找不到 ID 为 {round_id} 的回合。", at=False)
+            return
+
+        await event.reply(f"正在渲染 Round {round_id} 的内容...", at=False)
+        image_bytes = await self.renderer.render_markdown(
+            round_info["assistant_response"]
+        )
+
+        if image_bytes:
+            await self.api.post_group_file(
+                str(event.group_id),
+                image=f"data:image/png;base64,{bytes_to_base64(image_bytes)}",
+            )
+        else:
+            await event.reply("渲染内容失败，请检查日志。", at=False)
+
+    async def handle_round_show(self, event: GroupMessageEvent, round_id: int):
+        """处理 /aigm round show <id> 命令"""
+        game = await self.db.get_game_by_channel_id(str(event.group_id))
+        if not game:
+            await event.reply("当前群组没有正在进行的游戏。", at=False)
+            return
+        await self._show_round_content(event, round_id)
+
+    async def handle_branch_show(self, event: GroupMessageEvent, branch_name: str):
+        """处理 /aigm branch show <name> 命令"""
+        group_id = str(event.group_id)
+        game = await self.db.get_game_by_channel_id(group_id)
+
+        if not game:
+            await event.reply("当前群组没有正在进行的游戏。", at=False)
+            return
+
+        game_id = game['game_id']
+        branch = await self.db.get_branch_by_name(game_id, branch_name)
+        if not branch or branch['tip_round_id'] is None:
+            await event.reply(f"找不到名为 '{branch_name}' 的分支或该分支没有指向任何回合。", at=False)
+            return
+
+        await self._show_round_content(event, branch['tip_round_id'])
 
     async def handle_game_list(self, event: GroupMessageEvent):
         """处理 /aigm game list 命令"""
