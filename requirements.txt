@@ -5,3 +5,4 @@ aiofiles
 markdown-it-py
 playwright
 aiohttp
+graphviz

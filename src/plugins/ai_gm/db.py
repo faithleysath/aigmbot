@@ -365,6 +365,22 @@ class Database:
             await cursor.execute("SELECT game_id, channel_id, host_user_id, created_at, updated_at FROM games")
             return await cursor.fetchall()
 
+    async def get_all_branches_for_game(self, game_id: int):
+        """获取指定游戏的所有分支信息"""
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+        async with self.conn.cursor() as cursor:
+            await cursor.execute("SELECT * FROM branches WHERE game_id = ?", (game_id,))
+            return await cursor.fetchall()
+
+    async def get_all_rounds_for_game(self, game_id: int):
+        """获取指定游戏的所有回合信息"""
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+        async with self.conn.cursor() as cursor:
+            await cursor.execute("SELECT round_id, parent_id FROM rounds WHERE game_id = ?", (game_id,))
+            return await cursor.fetchall()
+
     async def attach_game_to_channel(self, game_id: int, channel_id: str):
         """将游戏附加到频道"""
         if not self.conn:

@@ -8,6 +8,8 @@ from ncatbot.utils import get_log
 from .db import Database
 from .game_manager import GameManager
 from .cache import CacheManager
+from .visualizer import Visualizer
+from .utils import bytes_to_base64
 
 LOG = get_log(__name__)
 
@@ -19,12 +21,14 @@ class CommandHandler:
         db: Database,
         game_manager: GameManager,
         cache_manager: CacheManager,
+        visualizer: Visualizer,
     ):
         self.plugin = plugin
         self.api = plugin.api
         self.db = db
         self.game_manager = game_manager
         self.cache_manager = cache_manager
+        self.visualizer = visualizer
         self.rbac_manager = plugin.rbac_manager
 
     async def _is_authorized_for_channel_action(
@@ -59,6 +63,7 @@ class CommandHandler:
 /aigm checkout head - 重新加载并显示当前游戏的最新状态
 /aigm admin unfreeze - [管理员] 强制解冻当前游戏
 /aigm admin delete <id> - [ROOT] 删除指定ID的游戏
+/aigm branch list - 可视化显示当前游戏的分支图
         """
         await event.reply(help_text.strip(), at=False)
 
@@ -86,6 +91,28 @@ class CommandHandler:
             ])
 
         await api.post_group_array_msg(event.group_id, message_array)
+
+    async def handle_branch_list(self, event: GroupMessageEvent):
+        """处理 /aigm branch list 命令"""
+        group_id = str(event.group_id)
+        game = await self.db.get_game_by_channel_id(group_id)
+
+        if not game:
+            await event.reply("当前群组没有正在进行的游戏。", at=False)
+            return
+
+        game_id = game['game_id']
+        await event.reply("正在生成分支图，请稍候...", at=False)
+        
+        image_bytes = await self.visualizer.create_branch_graph(game_id)
+
+        if image_bytes:
+            await self.api.post_group_file(
+                group_id,
+                image=f"data:image/png;base64,{bytes_to_base64(image_bytes)}",
+            )
+        else:
+            await event.reply("生成分支图失败，请检查日志。", at=False)
 
     async def handle_game_list(self, event: GroupMessageEvent):
         """处理 /aigm game list 命令"""

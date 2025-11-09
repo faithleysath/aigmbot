@@ -18,6 +18,7 @@ from .game_manager import GameManager
 from .event_handler import EventHandler
 from .content_fetcher import ContentFetcher
 from .commands import CommandHandler
+from .visualizer import Visualizer
 
 LOG = get_log(__name__)
 
@@ -37,6 +38,7 @@ class AIGMPlugin(NcatBotPlugin):
         self.game_manager: GameManager | None = None
         self.event_handler: EventHandler | None = None
         self.command_handler: CommandHandler | None = None
+        self.visualizer: Visualizer | None = None
         self.data_path: Path = Path()
 
     async def on_load(self):
@@ -82,6 +84,7 @@ class AIGMPlugin(NcatBotPlugin):
         await self.cache_manager.load_from_disk()
 
         if self.db and self.llm_api and self.renderer and self.cache_manager:
+            self.visualizer = Visualizer(self.db)
             content_fetcher = ContentFetcher(self, self.cache_manager)
             self.game_manager = GameManager(
                 self,
@@ -104,6 +107,7 @@ class AIGMPlugin(NcatBotPlugin):
                 self.db,
                 self.game_manager,
                 self.cache_manager,
+                self.visualizer,
             )
         else:
             LOG.error(f"[{self.name}] 部分组件初始化失败，插件功能可能不完整。")
@@ -152,6 +156,14 @@ class AIGMPlugin(NcatBotPlugin):
     async def aigm_status(self, event: GroupMessageEvent):
         if self.command_handler:
             await self.command_handler.handle_status(event, self.api)
+
+    # --- Branch Subcommands ---
+    branch_group = aigm_group.group("branch", description="分支管理")
+
+    @branch_group.command("list", description="可视化显示当前游戏的分支")
+    async def aigm_branch_list(self, event: GroupMessageEvent):
+        if self.command_handler:
+            await self.command_handler.handle_branch_list(event)
 
     # --- Game Subcommands ---
     game_group = aigm_group.group("game", description="游戏管理")
