@@ -106,31 +106,40 @@ class AIGMPlugin(NcatBotPlugin):
         if self.db and self.llm_api and self.renderer and self.cache_manager:
             self.web_ui = WebUI(self.db, data_dir)
             
-            # 在后台线程启动 Flare tunnel
-            LOG.info("Starting Flare tunnel...")
-            try:
-                from flaredantic import FlareTunnel, FlareConfig
-                config = FlareConfig(
-                    port=8000,
-                    bin_dir=data_dir / "bin",
-                    timeout=60,
-                    verbose=True
-                )
-                self.web_ui.tunnel = FlareTunnel(config)
-                await asyncio.to_thread(self.web_ui.tunnel.start)
-                self.web_ui.tunnel_url = self.web_ui.tunnel.tunnel_url
-                if self.web_ui.tunnel_url:
-                    LOG.info(f"✅ Flare tunnel started successfully at: {self.web_ui.tunnel_url}")
-                else:
-                    LOG.warning("⚠️ Tunnel started but URL is not available")
-            except Exception as e:
-                LOG.error(f"❌ Failed to start Flare tunnel: {e}", exc_info=True)
-                self.web_ui.tunnel_url = None
-            finally:
-                self.web_ui.tunnel_ready.set()
-            
-            # 启动 Web UI 服务器
+            # 1. 先启动 Web UI 服务器（在后台）
+            LOG.info("Starting Web UI server...")
             self.web_ui_task = asyncio.create_task(self.web_ui.run_in_background())
+            
+            # 2. 等待服务器就绪（最多等待 10 秒）
+            try:
+                await asyncio.wait_for(self.web_ui.server_ready.wait(), timeout=10.0)
+                LOG.info("✅ Web UI server is ready on http://127.0.0.1:8000")
+            except asyncio.TimeoutError:
+                LOG.error("❌ Web UI server startup timed out")
+                self.web_ui.tunnel_ready.set()  # 即使失败也要设置以避免阻塞
+            else:
+                # 3. 服务器就绪后再启动 Cloudflare tunnel
+                LOG.info("Starting Cloudflare tunnel...")
+                try:
+                    from flaredantic import FlareTunnel, FlareConfig
+                    config = FlareConfig(
+                        port=8000,
+                        bin_dir=data_dir / "bin",
+                        timeout=60,
+                        verbose=True
+                    )
+                    self.web_ui.tunnel = FlareTunnel(config)
+                    await asyncio.to_thread(self.web_ui.tunnel.start)
+                    self.web_ui.tunnel_url = self.web_ui.tunnel.tunnel_url
+                    if self.web_ui.tunnel_url:
+                        LOG.info(f"✅ Flare tunnel started successfully at: {self.web_ui.tunnel_url}")
+                    else:
+                        LOG.warning("⚠️ Tunnel started but URL is not available")
+                except Exception as e:
+                    LOG.error(f"❌ Failed to start Flare tunnel: {e}", exc_info=True)
+                    self.web_ui.tunnel_url = None
+                finally:
+                    self.web_ui.tunnel_ready.set()
 
             self.visualizer = Visualizer(self.db)
             content_fetcher = ContentFetcher(self, self.cache_manager)
