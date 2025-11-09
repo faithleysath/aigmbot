@@ -5,11 +5,11 @@ from fastapi.templating import Jinja2Templates
 from pathlib import Path
 import uvicorn
 from contextlib import asynccontextmanager
+from flaredantic import FlareTunnel
 
 from ncatbot.utils import get_log
 
 from .db import Database
-from flaredantic import FlareTunnel, FlareConfig, CloudflaredError
 
 LOG = get_log(__name__)
 
@@ -19,6 +19,7 @@ class WebUI:
         self.plugin_data_path = plugin_data_path
         self.app = FastAPI(lifespan=self.lifespan)
         self.templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+        # Tunnel 相关属性由外部（main.py）管理
         self.tunnel: FlareTunnel | None = None
         self.tunnel_url: str | None = None
         self.tunnel_ready = asyncio.Event()
@@ -35,47 +36,11 @@ class WebUI:
     @asynccontextmanager
     async def lifespan(self, app: FastAPI):
         # Startup
-        LOG.info("Web UI is starting up...")
-        try:
-            LOG.info("Configuring Flare tunnel...")
-            config = FlareConfig(
-                port=8000,
-                bin_dir=self.plugin_data_path / "bin",
-                timeout=60,  # 增加超时时间，首次启动需要下载 cloudflared
-                verbose=True
-            )
-            self.tunnel = FlareTunnel(config)
-            
-            # 直接调用 start()，不使用 run_in_executor
-            # 这允许 cloudflared 子进程正确地与父进程通信并捕获输出
-            LOG.info("Starting Flare tunnel (this may take a while on first run)...")
-            self.tunnel.start()
-            
-            self.tunnel_url = self.tunnel.tunnel_url
-            if self.tunnel_url:
-                LOG.info(f"✅ Flare tunnel started successfully at: {self.tunnel_url}")
-            else:
-                LOG.warning("⚠️ Tunnel started but URL is not available")
-            self.tunnel_ready.set()
-        except CloudflaredError as e:
-            LOG.error(f"❌ Failed to start flare tunnel (Cloudflare error): {e}", exc_info=True)
-            self.tunnel_url = None
-            self.tunnel_ready.set()  # 即使失败也设置标志
-        except Exception as e:
-            LOG.error(f"❌ Failed to start flare tunnel (unexpected error): {e}", exc_info=True)
-            self.tunnel_url = None
-            self.tunnel_ready.set()  # 即使失败也设置标志
-        
+        LOG.info("Web UI server is starting up...")
+        # Tunnel 的启动和关闭由插件生命周期管理（main.py）
         yield
-        
         # Shutdown
-        LOG.info("Web UI is shutting down...")
-        if self.tunnel:
-            try:
-                self.tunnel.stop()
-                LOG.info("Flare tunnel stopped successfully.")
-            except Exception as e:
-                LOG.error(f"Error stopping tunnel: {e}", exc_info=True)
+        LOG.info("Web UI server is shutting down...")
 
     async def run_in_background(self):
         """Run the FastAPI app."""
