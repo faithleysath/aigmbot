@@ -60,8 +60,14 @@ class WebUI:
             config.bind = ["127.0.0.1:8000"]
             config.loglevel = "info"
             
+            # 创建一个关闭事件，避免在非主线程中注册信号处理器
+            shutdown_event = asyncio.Event()
+            
+            async def serve_with_trigger():
+                await serve(self.app, config, shutdown_trigger=shutdown_event.wait) # type: ignore
+            
             try:
-                loop.run_until_complete(serve(self.app, config)) # type: ignore
+                loop.run_until_complete(serve_with_trigger())
             except Exception as e:
                 LOG.error(f"Web UI server error: {e}", exc_info=True)
             finally:
