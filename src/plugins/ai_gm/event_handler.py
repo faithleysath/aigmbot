@@ -13,6 +13,7 @@ from .game_manager import GameManager
 from .renderer import MarkdownRenderer
 from .utils import EMOJI, bytes_to_base64
 from .content_fetcher import ContentFetcher
+from .commands import CommandHandler
 
 LOG = get_log(__name__)
 
@@ -26,6 +27,7 @@ class EventHandler:
         game_manager: GameManager,
         renderer: MarkdownRenderer,
         content_fetcher: ContentFetcher,
+        command_handler: CommandHandler,
     ):
         self.plugin = plugin
         self.api = plugin.api
@@ -35,6 +37,7 @@ class EventHandler:
         self.renderer = renderer
         self.config = plugin.config
         self.content_fetcher = content_fetcher
+        self.command_handler = command_handler
 
     async def handle_group_message(self, event: GroupMessageEvent):
         """处理群聊消息，包括文件上传启动和自定义输入"""
@@ -249,37 +252,6 @@ class EventHandler:
                 system_prompt=pending_game["system_prompt"],
             )
 
-    async def _is_group_admin_or_host(self, group_id: str, user_id: str) -> bool:
-        """
-        检查用户是否为群管理员或游戏主持人。
-        
-        已弃用：建议使用 CommandHandler.check_channel_permission() 方法。
-        此方法保留用于事件处理器的兼容性。
-        
-        Args:
-            group_id: 群组ID
-            user_id: 用户ID
-            
-        Returns:
-            bool: 如果用户有权限返回 True，否则返回 False
-        """
-        # Root 用户拥有完整控制权
-        if self.plugin.rbac_manager.user_has_role(user_id, "root"):
-            return True
-        
-        if not self.db:
-            return False
-        try:
-            host_user_id = await self.db.get_host_user_id(group_id)
-            if host_user_id and user_id == host_user_id:
-                return True  # Is the host
-
-            member_info = await self.api.get_group_member_info(group_id, user_id)
-            return member_info.role in ["admin", "owner"]
-        except Exception as e:
-            LOG.error(f"获取群 {group_id} 成员 {user_id} 信息失败: {e}")
-            return False
-
     async def _handle_admin_main_message_reaction(
         self, game_id: int, group_id: str, main_message_id: str, emoji_id: str
     ):
@@ -376,7 +348,16 @@ class EventHandler:
             )
 
         # 检查是否是管理员或主持人
-        is_admin_or_host = await self._is_group_admin_or_host(group_id, user_id)
+        sender_role = None
+        try:
+            member_info = await self.api.get_group_member_info(group_id, user_id)
+            sender_role = member_info.role
+        except Exception as e:
+            LOG.warning(f"获取群 {group_id} 成员 {user_id} 信息失败: {e}")
+
+        is_admin_or_host = await self.command_handler.check_channel_permission(
+            user_id, group_id, sender_role
+        )
         if not is_admin_or_host:
             return
 

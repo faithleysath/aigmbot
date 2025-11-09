@@ -93,14 +93,6 @@ class AIGMPlugin(NcatBotPlugin):
                 self.cache_manager,
                 content_fetcher,
             )
-            self.event_handler = EventHandler(
-                self,
-                self.db,
-                self.cache_manager,
-                self.game_manager,
-                self.renderer,
-                content_fetcher,
-            )
             self.command_handler = CommandHandler(
                 self,
                 self.db,
@@ -108,6 +100,15 @@ class AIGMPlugin(NcatBotPlugin):
                 self.cache_manager,
                 self.visualizer,
                 self.renderer,
+            )
+            self.event_handler = EventHandler(
+                self,
+                self.db,
+                self.cache_manager,
+                self.game_manager,
+                self.renderer,
+                content_fetcher,
+                self.command_handler,
             )
         else:
             LOG.error(f"[{self.name}] 部分组件初始化失败，插件功能可能不完整。")
