@@ -196,6 +196,9 @@ class AIGMPlugin(NcatBotPlugin):
     async def aigm_branch_create(
         self, event: GroupMessageEvent, name: str, from_round_id: int = -1
     ):
+        if name.lower() == "head":
+            await event.reply("❌ 'head' 是一个保留关键字，不能用作分支名称。", at=False)
+            return
         if self.command_handler:
             actual_from_round_id = from_round_id if from_round_id != -1 else None
             await self.command_handler.handle_branch_create(
@@ -204,6 +207,9 @@ class AIGMPlugin(NcatBotPlugin):
 
     @branch_group.command("rename", description="重命名分支")
     async def aigm_branch_rename(self, event: GroupMessageEvent, old_name: str, new_name: str):
+        if new_name.lower() == "head":
+            await event.reply("❌ 'head' 是一个保留关键字，不能用作分支名称。", at=False)
+            return
         if self.command_handler:
             await self.command_handler.handle_branch_rename(event, old_name, new_name)
 
@@ -290,18 +296,16 @@ class AIGMPlugin(NcatBotPlugin):
                 event, new_host_id=at_user.qq, game_id=game_id
             )
 
-    # --- Checkout Subcommands ---
-    checkout_group = aigm_group.group("checkout", description="游戏历史操作")
-
-    @checkout_group.command("head", description="重新加载并显示最新状态")
-    async def aigm_checkout_head(self, event: GroupMessageEvent):
+    # --- Checkout Command ---
+    @aigm_group.command(
+        "checkout", aliases=["co"], description="切换到指定分支或重新加载HEAD"
+    )
+    async def aigm_checkout(self, event: GroupMessageEvent, target: str):
         if self.command_handler:
-            await self.command_handler.handle_checkout_head(event)
-
-    @aigm_group.command("checkout", aliases=["co"], description="切换到指定分支")
-    async def aigm_checkout(self, event: GroupMessageEvent, branch_name: str):
-        if self.command_handler:
-            await self.command_handler.handle_checkout(event, branch_name)
+            if target.lower() == "head":
+                await self.command_handler.handle_checkout_head(event)
+            else:
+                await self.command_handler.handle_checkout(event, target)
 
     @aigm_group.command("reset", description="将当前分支重置到指定回合")
     async def aigm_reset(self, event: GroupMessageEvent, round_id: int):
