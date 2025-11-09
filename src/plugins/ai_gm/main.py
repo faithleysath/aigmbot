@@ -175,6 +175,11 @@ class AIGMPlugin(NcatBotPlugin):
         if self.command_handler:
             await self.command_handler.handle_branch_show(event, branch_name)
 
+    @branch_group.command("history", description="查看指定分支的历史记录")
+    async def aigm_branch_history(self, event: GroupMessageEvent, branch_name: str | None = None, limit: int = 10):
+        if self.command_handler:
+            await self.command_handler.handle_branch_history(event, branch_name, limit)
+
     # --- Round Subcommands ---
     round_group = aigm_group.group("round", description="回合管理")
 

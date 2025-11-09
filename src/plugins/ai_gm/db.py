@@ -384,6 +384,17 @@ class Database:
             )
             return await cursor.fetchone()
 
+    async def get_branch_by_id(self, branch_id: int):
+        """通过 branch_id 获取分支信息"""
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+        async with self.conn.cursor() as cursor:
+            await cursor.execute(
+                "SELECT * FROM branches WHERE branch_id = ?",
+                (branch_id,),
+            )
+            return await cursor.fetchone()
+
     async def get_all_rounds_for_game(self, game_id: int):
         """获取指定游戏的所有回合信息"""
         if not self.conn:

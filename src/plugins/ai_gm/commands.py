@@ -71,6 +71,7 @@ class CommandHandler:
 /aigm branch list - 可视化显示当前游戏的分支图（简化）
 /aigm branch list all - 可视化显示当前游戏的完整分支图
 /aigm branch show <branch_name> - 查看指定分支顶端的内容
+/aigm branch history [branch_name] [limit=N] - 查看指定分支的历史记录（默认为HEAD）
 /aigm round show <round_id> - 查看指定回合的内容
 /aigm round history <round_id> [limit=N] - 查看指定回合及其历史记录
         """
@@ -122,6 +123,29 @@ class CommandHandler:
             )
         else:
             await event.reply("生成分支图失败，请检查日志。", at=False)
+
+    async def handle_branch_history(self, event: GroupMessageEvent, branch_name: str | None = None, limit: int = 10):
+        """处理 /aigm branch history [name] [limit] 命令"""
+        game = await self.db.get_game_by_channel_id(str(event.group_id))
+        if not game:
+            await event.reply("当前群组没有正在进行的游戏。", at=False)
+            return
+
+        branch = None
+        if branch_name:
+            branch = await self.db.get_branch_by_name(game['game_id'], branch_name)
+        else:
+            # 如果没有提供分支名，则使用 HEAD 分支
+            if game['head_branch_id']:
+                branch = await self.db.get_branch_by_id(game['head_branch_id'])
+
+        if not branch or branch['tip_round_id'] is None:
+            display_name = f"名为 '{branch_name}' 的" if branch_name else "HEAD"
+            await event.reply(f"找不到{display_name}分支或该分支没有指向任何回合。", at=False)
+            return
+
+        tip_round_id = branch['tip_round_id']
+        await self.handle_round_history(event, tip_round_id, limit)
 
     async def handle_branch_list_all(self, event: GroupMessageEvent):
         """处理 /aigm branch list all 命令"""
