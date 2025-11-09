@@ -48,6 +48,13 @@ class CommandHandler:
         self.renderer = renderer
         self.rbac_manager = plugin.rbac_manager
 
+    async def _get_channel_game(self, event: GroupMessageEvent):
+        """获取当前频道的游戏，如果不存在则回复用户并返回 None"""
+        game = await self.db.get_game_by_channel_id(str(event.group_id))
+        if not game:
+            await event.reply("当前频道没有正在进行的游戏。", at=False)
+        return game
+
     async def _is_authorized_for_channel_action(
         self, user_id: str, group_id: str, sender_role: str | None
     ) -> bool:
@@ -366,19 +373,22 @@ class CommandHandler:
             await event.reply("❌ 无效的分支名称。名称长度应在1-50之间，且只能包含字母、数字、下划线和连字符。", at=False)
             return
 
-        branch = await self.db.get_branch_by_name(game["game_id"], old_name)
-        if not branch:
-            await event.reply(f"找不到名为 '{old_name}' 的分支。", at=False)
-            return
+        try:
+            branch = await self.db.get_branch_by_name(game["game_id"], old_name)
+            if not branch:
+                await event.reply(f"找不到名为 '{old_name}' 的分支。", at=False)
+                return
 
-        # 检查新名称是否已存在
-        existing_branch = await self.db.get_branch_by_name(game["game_id"], new_name)
-        if existing_branch:
-            await event.reply(f"❌ 分支名 '{new_name}' 已被占用。", at=False)
-            return
-
-        await self.db.rename_branch(branch["branch_id"], new_name)
-        await event.reply(f"✅ 分支 '{old_name}' 已成功重命名为 '{new_name}'。", at=False)
+            # 使用数据库 UNIQUE 约束处理重名，让数据库保证原子性
+            await self.db.rename_branch(branch["branch_id"], new_name)
+            await event.reply(f"✅ 分支 '{old_name}' 已成功重命名为 '{new_name}'。", at=False)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "unique" in error_msg or "constraint" in error_msg:
+                await event.reply(f"❌ 分支名 '{new_name}' 已被占用。", at=False)
+            else:
+                LOG.error(f"重命名分支失败: {e}", exc_info=True)
+                await event.reply(f"❌ 重命名分支失败: {e}", at=False)
 
     async def handle_branch_delete(self, event: GroupMessageEvent, name: str):
         """处理 /aigm branch delete 命令"""
@@ -395,19 +405,18 @@ class CommandHandler:
             await event.reply("当前频道没有正在进行的游戏。", at=False)
             return
 
-        branch = await self.db.get_branch_by_name(game["game_id"], name)
-        if not branch:
-            await event.reply(f"找不到名为 '{name}' 的分支。", at=False)
-            return
-
         try:
             async with self.db.transaction():
-                # 在事务内再次检查以防止竞态条件
+                # 在事务内获取分支和检查，防止竞态条件
+                branch = await self.db.get_branch_by_name(game["game_id"], name)
+                if not branch:
+                    raise ValueError(f"找不到名为 '{name}' 的分支")
+                
                 current_game = await self.db.get_game_by_game_id(game["game_id"])
                 if not current_game:
                     raise ValueError("游戏不存在")
                 if current_game["head_branch_id"] == branch["branch_id"]:
-                    raise ValueError("不能删除当前所在的 HEAD 分支。")
+                    raise ValueError("不能删除当前所在的 HEAD 分支")
                 
                 await self.db.delete_branch(branch["branch_id"])
             
