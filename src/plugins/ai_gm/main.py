@@ -165,6 +165,11 @@ class AIGMPlugin(NcatBotPlugin):
         if self.command_handler:
             await self.command_handler.handle_branch_list(event)
 
+    @branch_group.command("list all", description="可视化显示当前游戏的完整分支图")
+    async def aigm_branch_list_all(self, event: GroupMessageEvent):
+        if self.command_handler:
+            await self.command_handler.handle_branch_list_all(event)
+
     # --- Game Subcommands ---
     game_group = aigm_group.group("game", description="游戏管理")
 

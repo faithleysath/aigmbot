@@ -98,3 +98,56 @@ class Visualizer:
         except Exception as e:
             LOG.error(f"创建分支图失败: {e}", exc_info=True)
             return None
+
+    async def create_full_branch_graph(self, game_id: int) -> bytes | None:
+        """为指定游戏创建并渲染一个包含所有 round 节点的完整分支图"""
+        try:
+            game = await self.db.get_game_by_game_id(game_id)
+            if not game:
+                return None
+
+            all_rounds = await self.db.get_all_rounds_for_game(game_id)
+            all_branches = await self.db.get_all_branches_for_game(game_id)
+            head_branch_id = game["head_branch_id"]
+
+            if not all_rounds:
+                return None
+
+            dot = graphviz.Digraph(comment=f'Game {game_id} Full Branch Graph')
+            dot.attr('node', shape='box', style='rounded')
+            dot.attr(bgcolor='transparent', rankdir='LR')
+
+            branch_tips = {b["tip_round_id"]: (b["name"], b["branch_id"]) for b in all_branches}
+
+            # 1. 添加所有 round 节点
+            nodes_with_parent = {r['round_id'] for r in all_rounds if r['parent_id'] != -1}
+            root_node_id = next((r['round_id'] for r in all_rounds if r['round_id'] not in nodes_with_parent), None)
+
+            for r in all_rounds:
+                round_id = r["round_id"]
+                label = f"Round {round_id}"
+                
+                # 检查是否是某个分支的 tip
+                if round_id in branch_tips:
+                    branch_name, branch_id = branch_tips[round_id]
+                    is_head = (branch_id == head_branch_id)
+                    color = 'green' if is_head else 'lightblue'
+                    fontcolor = 'white' if is_head else 'black'
+                    style = 'rounded,filled'
+                    branch_label = f"{branch_name} (HEAD)" if is_head else f"{branch_name}"
+                    dot.node(str(round_id), f"{branch_label}\n(Round {round_id})", color=color, fontcolor=fontcolor, style=style)
+                elif round_id == root_node_id:
+                    dot.node(str(round_id), f"Initial\n(Round {round_id})", shape='ellipse')
+                else:
+                    dot.node(str(round_id), label)
+
+            # 2. 添加所有边
+            for r in all_rounds:
+                if r["parent_id"] != -1:
+                    dot.edge(str(r["parent_id"]), str(r["round_id"]))
+
+            return dot.pipe(format='png')
+
+        except Exception as e:
+            LOG.error(f"创建完整分支图失败: {e}", exc_info=True)
+            return None
