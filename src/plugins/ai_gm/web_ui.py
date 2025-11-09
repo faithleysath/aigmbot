@@ -28,7 +28,6 @@ class WebUI:
         self.tunnel: FlareTunnel | None = None
         self.tunnel_url: str | None = None
         self.tunnel_ready = asyncio.Event()
-        self.server_ready = asyncio.Event()  # 标记服务器何时真正就绪
         
         # 设置路由
         self._setup_routes()
@@ -63,9 +62,6 @@ class WebUI:
         site = web.TCPSite(self.runner, '127.0.0.1', 8000)
         await site.start()
         LOG.info("Web UI server started on http://127.0.0.1:8000")
-        
-        # 标记服务器已就绪
-        self.server_ready.set()
         
         # 保持服务器运行
         while True:
