@@ -48,6 +48,7 @@ class WebUI:
         config = Config()
         config.bind = ["127.0.0.1:8000"]
         config.loglevel = "info"
+        LOG.info("Starting Web UI server on http://127.0.0.1:8000")
         await serve(self.app, config)  # type: ignore
 
     async def wait_for_tunnel(self, timeout: float = 10.0) -> bool:

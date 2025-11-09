@@ -130,7 +130,7 @@ class AIGMPlugin(NcatBotPlugin):
                 self.web_ui.tunnel_ready.set()
             
             # 启动 Web UI 服务器
-            self.web_ui_task = asyncio.create_task(self.web_ui.run_in_background())
+            self.web_ui_task = asyncio.get_event_loop().create_task(self.web_ui.run_in_background())
 
             self.visualizer = Visualizer(self.db)
             content_fetcher = ContentFetcher(self, self.cache_manager)
