@@ -138,7 +138,8 @@ class CommandHandler:
 /aigm game sethost-by-id <id> @user - [主持人/管理员] 变更指定ID游戏的主持人
 
 分支操作:
-/aigm branch list [all] - 可视化显示分支图（all显示完整图）
+/aigm branch list - 可视化显示分支图
+/aigm branch listall - 可视化显示完整分支图
 /aigm branch show <name> - 查看指定分支顶端的内容
 /aigm branch history [name] [limit=N] - 查看指定分支的历史记录
 /aigm branch create <name> [from_round_id] - [主持人/管理员] 创建新分支

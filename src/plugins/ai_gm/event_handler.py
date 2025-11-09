@@ -333,10 +333,6 @@ class EventHandler:
         game = await self.db.get_game_by_channel_id(group_id)
         if not game:
             return
-        
-        # 提前检查冻结状态，避免不必要的后续操作
-        if game["is_frozen"]:
-            return
 
         game_id = game["game_id"]
         main_message_id = str(game["main_message_id"])
@@ -346,11 +342,15 @@ class EventHandler:
         if message_id != main_message_id and message_id not in candidate_ids:
             return
 
-        # 更新投票缓存（即使游戏随后被冻结，投票记录也会保留但不会立即生效）
+        # 无论是否冻结，先记录投票（避免数据丢失）
         if self.cache_manager:
             await self.cache_manager.update_vote(
                 group_id, message_id, emoji_id, user_id, event.is_add or False
             )
+
+        # 后续仅管理员/主持人的控制动作需要受冻结状态约束
+        if game["is_frozen"]:
+            return
 
         # 检查是否是管理员或主持人
         sender_role = None

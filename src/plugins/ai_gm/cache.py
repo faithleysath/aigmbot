@@ -223,7 +223,7 @@ class CacheManager:
         if self._loaded:
             LOG.warning("缓存已加载过，重复加载被忽略。")
             return
-        if not self.cache_path or not await aio_os.path.exists(str(self.cache_path)):
+        if not self.cache_path or not self.cache_path.exists():
             self._loaded = True
             return
 
@@ -251,6 +251,10 @@ class CacheManager:
                                 item["content"] = item_payload["content"]
                             if "votes" in item_payload:
                                 item["votes"] = {str(k): set(v) for k, v in item_payload["votes"].items()}
+                            # 恢复时间戳
+                            ts = item_payload.get("timestamp")
+                            if ts:
+                                item["timestamp"] = datetime.fromisoformat(ts)
                             vote_cache_restored[group_id][msg_id] = item
 
                     # 直接更新内存状态（已在 _cache_lock 保护下）
@@ -293,16 +297,19 @@ class CacheManager:
                 serializable_pending[key] = game_data
 
             # 构造可序列化的 vote_cache（set -> list）
-            serializable_votes = {
-                group_id: {
-                    msg_id: {
+            serializable_votes = {}
+            for group_id, messages in self.vote_cache.items():
+                serializable_votes[group_id] = {}
+                for msg_id, item in messages.items():
+                    vote_item = {
                         "content": item.get("content"),
                         "votes": {emoji_id: list(users) for emoji_id, users in item.get("votes", {}).items()},
                     }
-                    for msg_id, item in messages.items()
-                }
-                for group_id, messages in self.vote_cache.items()
-            }
+                    # 持久化时间戳（仅在存在时写入）
+                    timestamp = item.get("timestamp")
+                    if timestamp:
+                        vote_item["timestamp"] = timestamp.isoformat()
+                    serializable_votes[group_id][msg_id] = vote_item
 
             data = {
                 "pending_new_games": serializable_pending,

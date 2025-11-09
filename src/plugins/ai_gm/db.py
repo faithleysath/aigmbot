@@ -71,6 +71,19 @@ class Database:
             await self.connect()
             self._last_health_check = now
 
+    async def _ensure_conn_or_raise(self):
+        """
+        确保数据库连接可用的辅助方法，用于只读操作。
+        
+        在所有只读方法开头调用此方法，确保连接健康并在断线时自愈。
+        
+        Raises:
+            RuntimeError: 如果数据库未连接且无法重连
+        """
+        await self._ensure_connection()
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+
     async def close(self):
         """关闭数据库连接"""
         if self.conn:
@@ -220,6 +233,9 @@ class Database:
         if not self.conn:
             raise RuntimeError("数据库未连接")
 
+        # 在事务入口做健康检查与必要的重连
+        await self._ensure_connection()
+
         # 获取当前事务深度
         depth = _transaction_depth.get()
         _transaction_depth.set(depth + 1)
@@ -262,8 +278,7 @@ class Database:
         Raises:
             RuntimeError: 如果数据库连接失败
         """
-        if not self.conn:
-            raise RuntimeError("数据库未连接")
+        await self._ensure_conn_or_raise()
         async with self.conn.execute(
             "SELECT 1 FROM games WHERE channel_id = ?", (channel_id,)
         ) as cursor:
@@ -283,8 +298,7 @@ class Database:
         Raises:
             RuntimeError: 如果数据库未连接
         """
-        if not self.conn:
-            raise RuntimeError("数据库未连接")
+        await self._ensure_conn_or_raise()
         async with self.conn.execute(
             "SELECT * FROM games WHERE channel_id = ?", (channel_id,)
         ) as cursor:
@@ -303,8 +317,7 @@ class Database:
         Raises:
             RuntimeError: 如果数据库未连接
         """
-        if not self.conn:
-            raise RuntimeError("数据库未连接")
+        await self._ensure_conn_or_raise()
         async with self.conn.execute(
             "SELECT * FROM games WHERE game_id = ?", (game_id,)
         ) as cursor:
@@ -347,8 +360,7 @@ class Database:
         Raises:
             RuntimeError: 如果数据库未连接
         """
-        if not self.conn:
-            raise RuntimeError("数据库未连接")
+        await self._ensure_conn_or_raise()
         async with self.conn.execute(
             "SELECT host_user_id FROM games WHERE channel_id = ?", (channel_id,)
         ) as cursor:
@@ -440,8 +452,7 @@ class Database:
         Raises:
             RuntimeError: 如果数据库未连接或游戏 head 分支未设置
         """
-        if not self.conn:
-            raise RuntimeError("数据库未连接")
+        await self._ensure_conn_or_raise()
         async with self.conn.execute(
             """SELECT g.channel_id, b.tip_round_id
                FROM games g
@@ -467,8 +478,7 @@ class Database:
         Raises:
             RuntimeError: 如果数据库未连接
         """
-        if not self.conn:
-            raise RuntimeError("数据库未连接")
+        await self._ensure_conn_or_raise()
         async with self.conn.execute(
             "SELECT * FROM rounds WHERE round_id = ?", (round_id,)
         ) as cursor:
@@ -533,8 +543,7 @@ class Database:
         Raises:
             RuntimeError: 如果数据库未连接
         """
-        if not self.conn:
-            raise RuntimeError("数据库未连接")
+        await self._ensure_conn_or_raise()
         async with self.conn.execute(
             "SELECT game_id, channel_id, host_user_id, created_at, updated_at FROM games"
         ) as cursor:
@@ -553,8 +562,7 @@ class Database:
         Raises:
             RuntimeError: 如果数据库未连接
         """
-        if not self.conn:
-            raise RuntimeError("数据库未连接")
+        await self._ensure_conn_or_raise()
         async with self.conn.execute(
             "SELECT * FROM branches WHERE game_id = ?", (game_id,)
         ) as cursor:
@@ -574,8 +582,7 @@ class Database:
         Raises:
             RuntimeError: 如果数据库未连接
         """
-        if not self.conn:
-            raise RuntimeError("数据库未连接")
+        await self._ensure_conn_or_raise()
         async with self.conn.execute(
             "SELECT * FROM branches WHERE game_id = ? AND name = ?",
             (game_id, branch_name),
@@ -595,8 +602,7 @@ class Database:
         Raises:
             RuntimeError: 如果数据库未连接
         """
-        if not self.conn:
-            raise RuntimeError("数据库未连接")
+        await self._ensure_conn_or_raise()
         async with self.conn.execute(
             "SELECT * FROM branches WHERE branch_id = ?",
             (branch_id,),
@@ -616,8 +622,7 @@ class Database:
         Raises:
             RuntimeError: 如果数据库未连接
         """
-        if not self.conn:
-            raise RuntimeError("数据库未连接")
+        await self._ensure_conn_or_raise()
         async with self.conn.execute(
             "SELECT round_id, parent_id FROM rounds WHERE game_id = ?", (game_id,)
         ) as cursor:
@@ -651,8 +656,7 @@ class Database:
         Raises:
             RuntimeError: 如果数据库未连接
         """
-        if not self.conn:
-            raise RuntimeError("数据库未连接")
+        await self._ensure_conn_or_raise()
         async with self.conn.execute(
             "SELECT * FROM tags WHERE game_id = ? AND name = ?",
             (game_id, name),
@@ -672,8 +676,7 @@ class Database:
         Raises:
             RuntimeError: 如果数据库未连接
         """
-        if not self.conn:
-            raise RuntimeError("数据库未连接")
+        await self._ensure_conn_or_raise()
         async with self.conn.execute(
             "SELECT * FROM tags WHERE game_id = ?", (game_id,)
         ) as cursor:
@@ -742,8 +745,7 @@ class Database:
         Raises:
             RuntimeError: 如果数据库未连接
         """
-        if not self.conn:
-            raise RuntimeError("数据库未连接")
+        await self._ensure_conn_or_raise()
         
         # 使用递归 CTE 一次性获取所有祖先
         query = """
