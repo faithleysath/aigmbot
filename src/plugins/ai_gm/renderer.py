@@ -3,6 +3,7 @@ from playwright.async_api import async_playwright
 from ncatbot.utils import get_log
 import asyncio
 import re
+from pathlib import Path
 
 from .constants import (
     MAX_CONCURRENT_RENDERS,
@@ -51,6 +52,7 @@ class MarkdownRenderer:
         self._page_count = 0  # 跟踪打开的页面数
         self._max_pages = 50  # 最大页面数限制
         self._render_timeout = 30.0  # 单次渲染超时（秒）
+        self._help_image_cache: bytes | None = None
 
     async def _is_browser_healthy(self) -> bool:
         """检查浏览器健康状态"""
@@ -316,3 +318,84 @@ class MarkdownRenderer:
                     "Playwright browser is not installed. Please run 'playwright install' in your terminal."
                 )
             raise
+
+    async def render_help_page(self) -> bytes | None:
+        """
+        将 help.html 模板渲染成图片并缓存。
+        
+        :return: 成功则返回图片的二进制数据 (bytes)，否则返回 None。
+        """
+        if self._help_image_cache:
+            LOG.debug("命中帮助图片缓存")
+            return self._help_image_cache
+
+        async with self._render_semaphore:
+            try:
+                # 读取 HTML 模板内容
+                template_path = Path(__file__).parent / "templates" / "help.html"
+                if not template_path.exists():
+                    LOG.error(f"帮助模板文件未找到: {template_path}")
+                    return None
+                
+                html_content = template_path.read_text(encoding="utf-8")
+
+                # 渲染
+                image_bytes = await asyncio.wait_for(
+                    self._render_html_to_image(html_content),
+                    timeout=self._render_timeout
+                )
+                
+                if image_bytes:
+                    LOG.info("成功渲染帮助页面，并已缓存")
+                    self._help_image_cache = image_bytes
+                
+                return image_bytes
+
+            except asyncio.TimeoutError:
+                LOG.error(f"帮助页面渲染超时 ({self._render_timeout}s)")
+                return None
+            except Exception as e:
+                LOG.error(f"帮助页面渲染失败: {e}", exc_info=True)
+                return None
+
+    async def _render_html_to_image(self, html_content: str) -> bytes | None:
+        """将原始 HTML 字符串渲染为图片的核心逻辑"""
+        browser = await self._ensure_browser()
+        if not browser:
+            LOG.error("浏览器未初始化，无法渲染 HTML")
+            return None
+
+        if not await self._is_browser_healthy():
+            LOG.warning("浏览器健康检查失败，尝试重新初始化...")
+            await self._reinit_browser()
+            browser = await self._ensure_browser()
+            if not browser:
+                LOG.error("浏览器重新初始化失败")
+                return None
+
+        page = None
+        try:
+            page = await browser.new_page()
+            self._page_count += 1
+            
+            # 从 HTML 的 body 标签中获取宽度
+            width_match = re.search(r'body\s*\{[^}]*width:\s*(\d+)px;', html_content)
+            render_width = int(width_match.group(1)) if width_match else RENDER_WIDTH
+
+            await page.set_viewport_size({"width": render_width, "height": 100})
+            await page.set_content(html_content, wait_until="networkidle")
+            await page.wait_for_timeout(50)
+
+            element = await page.query_selector("body")
+            image_bytes = await (
+                element.screenshot() if element else page.screenshot(full_page=True)
+            )
+            
+            return image_bytes
+        finally:
+            if page:
+                try:
+                    await page.close()
+                    self._page_count = max(0, self._page_count - 1)
+                except Exception as e:
+                    LOG.warning(f"关闭页面时出错: {e}")

@@ -128,47 +128,18 @@ class CommandHandler:
 
 
     async def handle_help(self, event: GroupMessageEvent):
-        """处理 /aigm help 命令"""
-        help_text = """
-/aigm help - 显示此帮助信息
-/aigm status - 查看当前群组的游戏状态
-
-游戏管理:
-/aigm game list - 列出所有游戏
-/aigm game attach <id> - [主持人/管理员] 将游戏附加到当前频道
-/aigm game detach - [主持人/管理员] 从当前频道分离游戏
-/aigm game sethost @user - [主持人/管理员] 变更当前频道游戏的主持人
-/aigm game sethost-by-id <id> @user - [主持人/管理员] 变更指定ID游戏的主持人
-
-分支操作:
-/aigm branch list [all] - 可视化显示分支图（all: 显示完整图）
-/aigm branch show <name> - 查看指定分支顶端的内容
-/aigm branch history [name] [limit=N] - 查看指定分支的历史记录
-/aigm branch create <name> [from_round_id] - [主持人/管理员] 创建新分支
-/aigm branch rename <old> <new> - [主持人/管理员] 重命名分支
-/aigm branch delete <name> - [主持人/管理员] 删除分支
-
-标签操作:
-/aigm tag list - 列出所有标签
-/aigm tag show <name> - 查看标签指向的回合内容
-/aigm tag history <name> [limit=N] - 查看标签指向的回合的历史记录
-/aigm tag create <name> [round_id] - [主持人/管理员] 创建新标签
-/aigm tag delete <name> - [主持人/管理员] 删除标签
-
-历史与状态控制:
-/aigm checkout <branch_name> - [主持人/管理员] 切换到指定分支
-/aigm checkout head - [主持人/管理员] 重新加载并显示最新状态
-/aigm reset <round_id> - [主持人/管理员] 将当前分支重置到指定回合
-/aigm round show <id> - 查看指定回合的内容
-/aigm round history <id> [limit=N] - 查看指定回合及其历史记录
-
-管理员命令:
-/aigm admin unfreeze - [群管理/ROOT] 强制解冻当前游戏
-/aigm admin refresh-tunnel - [ROOT] 重新刷新 Cloudflare tunnel
-/aigm admin delete <id> - [ROOT] 删除指定ID的游戏
-/aigm webui - 获取当前游戏的 Web UI 地址
-        """
-        await event.reply(help_text.strip(), at=False)
+        """处理 /aigm help 命令，将其渲染为图片发送"""
+        await event.reply("正在生成帮助图片，请稍候...", at=False)
+        
+        image_bytes = await self.renderer.render_help_page()
+        
+        if image_bytes:
+            await self.api.post_group_file(
+                str(event.group_id),
+                image=f"data:image/png;base64,{bytes_to_base64(image_bytes)}",
+            )
+        else:
+            await event.reply("❌ 生成帮助图片失败，请检查日志。", at=False)
 
     async def handle_webui(self, event: GroupMessageEvent):
         """处理 /aigm webui 命令"""
