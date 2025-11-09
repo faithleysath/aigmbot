@@ -61,12 +61,12 @@ class CommandHandler:
 /aigm help - 显示此帮助信息
 /aigm status - 查看当前群组的游戏状态
 /aigm game list - 列出所有游戏
-/aigm game attach <id> - 将游戏附加到当前频道
-/aigm game detach - 从当前频道分离游戏
-/aigm game sethost @user - 变更当前频道游戏的主持人
-/aigm game sethost-by-id <id> @user - 变更指定ID游戏的主持人
-/aigm checkout head - 重新加载并显示当前游戏的最新状态
-/aigm admin unfreeze - [管理员] 强制解冻当前游戏
+/aigm game attach <id> - [主持人/管理员] 将游戏附加到当前频道
+/aigm game detach - [主持人/管理员] 从当前频道分离游戏
+/aigm game sethost @user - [主持人/管理员] 变更当前频道游戏的主持人
+/aigm game sethost-by-id <id> @user - [主持人/管理员] 变更指定ID游戏的主持人
+/aigm checkout head - [主持人/管理员] 重新加载并显示当前游戏的最新状态
+/aigm admin unfreeze - [群管理/ROOT] 强制解冻当前游戏
 /aigm admin delete <id> - [ROOT] 删除指定ID的游戏
 /aigm branch list - 可视化显示当前游戏的分支图（简化）
 /aigm branch list all - 可视化显示当前游戏的完整分支图
