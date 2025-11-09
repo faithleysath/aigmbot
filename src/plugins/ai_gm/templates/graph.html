@@ -14,14 +14,11 @@
     <h2>Branch Graph for Game #{{ game_id }}</h2>
 
     <div id="graph-container" style="text-align: center;">
-        <div class="mermaid">
-            graph TD;
-                A[Loading graph...];
-        </div>
+        <div id="mermaid-output">Loading graph...</div>
     </div>
 
     <script>
-        mermaid.initialize({ startOnLoad: true, theme: 'dark' });
+        mermaid.initialize({ startOnLoad: false, theme: 'dark' });
 
         async function fetchAndRenderGraph() {
             try {
@@ -57,21 +54,17 @@
                 // 调试：输出生成的 Mermaid 定义
                 console.log('Generated Mermaid definition:', mermaidDefinition);
 
-                const container = document.querySelector('.mermaid');
-                container.textContent = mermaidDefinition;
+                // 使用 mermaid.render() API 渲染图表
+                const { svg } = await mermaid.render('graph-svg', mermaidDefinition);
                 
-                // 渲染新内容
-                await mermaid.run({
-                    nodes: [container]
-                });
+                // 将渲染后的 SVG 插入到页面
+                const container = document.getElementById('mermaid-output');
+                container.innerHTML = svg;
 
             } catch (error) {
                 console.error('Error rendering graph:', error);
-                const container = document.querySelector('.mermaid');
-                container.textContent = 'flowchart TD; A[Error loading graph];';
-                await mermaid.run({
-                    nodes: [container]
-                });
+                const container = document.getElementById('mermaid-output');
+                container.innerHTML = '<p style="color: red;">Error loading graph. See console for details.</p>';
             }
         }
 
