@@ -438,7 +438,10 @@ class EventHandler:
             yay = len(input_votes.get(str(EMOJI["YAY"]), set()))
             nay = len(input_votes.get(str(EMOJI["NAY"]), set()))
             net_score = yay - nay
-            scores[cid] = net_score
+
+            # 只有在有人投票时才计入 scores，以供后续逻辑判断
+            if yay > 0 or nay > 0:
+                scores[cid] = net_score
 
             content = await self.content_fetcher.get_custom_input_content(group_id, cid)
             display_content = f'"{content}"' if "ID:" not in content else content
