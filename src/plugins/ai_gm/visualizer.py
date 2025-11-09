@@ -57,7 +57,7 @@ class Visualizer:
             # 3. 构建简化图
             dot = graphviz.Digraph(comment=f'Game {game_id} Branch Graph')
             dot.attr('node', shape='plaintext') # 使用 plaintext 以支持 HTML-like labels
-            dot.attr(bgcolor='transparent', rankdir='LR')
+            dot.attr(bgcolor='white', rankdir='TB')
 
             processed_nodes = set()
 
@@ -131,7 +131,7 @@ class Visualizer:
 
             dot = graphviz.Digraph(comment=f'Game {game_id} Full Branch Graph')
             dot.attr('node', shape='plaintext')
-            dot.attr(bgcolor='transparent', rankdir='LR')
+            dot.attr(bgcolor='white', rankdir='TB')
 
             tags_by_round = {}
             for tag in all_tags:

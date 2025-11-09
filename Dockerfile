@@ -4,8 +4,8 @@ FROM python:3.11-slim
 # 设置工作目录
 WORKDIR /app
 
-# 安装系统依赖，包括 sudo 和 curl
-RUN apt-get update && apt-get install -y sudo curl && rm -rf /var/lib/apt/lists/*
+# 安装系统依赖，包括 sudo 和 curl graphviz
+RUN apt-get update && apt-get install -y sudo curl graphviz && rm -rf /var/lib/apt/lists/*
 
 # 安装napcat
 RUN curl -o napcat.sh https://nclatest.znin.net/NapNeko/NapCat-Installer/main/script/install.sh && bash napcat.sh --docker n --cli y
