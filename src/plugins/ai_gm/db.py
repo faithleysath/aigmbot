@@ -428,3 +428,23 @@ class Database:
                     "UPDATE games SET host_user_id = ? WHERE game_id = ?",
                     (new_host_id, game_id),
                 )
+
+    async def get_round_ancestors(self, round_id: int, limit: int = 10) -> list[aiosqlite.Row]:
+        """获取一个回合及其祖先，按时间倒序排列"""
+        if not self.conn:
+            raise RuntimeError("数据库未连接")
+        
+        ancestors = []
+        current_id = round_id
+        for _ in range(limit):
+            if current_id == -1:
+                break
+            async with self.conn.cursor() as cursor:
+                await cursor.execute("SELECT * FROM rounds WHERE round_id = ?", (current_id,))
+                round_data = await cursor.fetchone()
+                if not round_data:
+                    break
+                ancestors.append(round_data)
+                current_id = round_data["parent_id"]
+                
+        return list(reversed(ancestors))

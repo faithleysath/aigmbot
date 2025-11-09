@@ -1,7 +1,8 @@
 # src/plugins/ai_gm/commands.py
 from ncatbot.plugin_system import NcatBotPlugin
 from ncatbot.core.event import GroupMessageEvent
-from ncatbot.core.event.message_segment import At, MessageArray, Text, Reply
+from ncatbot.core.event.message_segment import At, MessageArray, Text, Reply, Image
+from ncatbot.core.helper.forward_constructor import ForwardConstructor
 from ncatbot.core.api import BotAPI
 from ncatbot.utils import get_log
 import json
@@ -71,6 +72,7 @@ class CommandHandler:
 /aigm branch list all - 可视化显示当前游戏的完整分支图
 /aigm branch show <branch_name> - 查看指定分支顶端的内容
 /aigm round show <round_id> - 查看指定回合的内容
+/aigm round history <round_id> [limit=N] - 查看指定回合及其历史记录
         """
         await event.reply(help_text.strip(), at=False)
 
@@ -180,6 +182,67 @@ class CommandHandler:
             await event.reply("当前群组没有正在进行的游戏。", at=False)
             return
         await self._show_round_content(event, round_id)
+
+    async def handle_round_history(self, event: GroupMessageEvent, round_id: int, limit: int = 10):
+        """处理 /aigm round history <id> [limit] 命令，并将每轮渲染到一张图片中"""
+        game = await self.db.get_game_by_channel_id(str(event.group_id))
+        if not game:
+            await event.reply("当前群组没有正在进行的游戏。", at=False)
+            return
+
+        if limit > 10:
+            limit = 10
+            await event.reply("为了防止消息刷屏和性能问题，历史记录上限设置为10条。", at=False)
+
+        await event.reply(f"正在生成 round {round_id} 的历史记录（最多{limit}条），请稍候...", at=False)
+
+        history = await self.db.get_round_ancestors(round_id, limit)
+        if not history:
+            await event.reply(f"找不到 round {round_id} 或其历史记录。", at=False)
+            return
+
+        # 使用动态昵称 f"#{round_id}"
+        fcr = ForwardConstructor(user_id=str(event.self_id), nickname=f"#{round_id}")
+        
+        for round_data in history:
+            # 1. 从 llm_usage 计算 extra_text
+            extra_text = None
+            llm_usage_str = round_data["llm_usage"]
+            if llm_usage_str:
+                try:
+                    usage = json.loads(llm_usage_str)
+                    prompt_tokens = usage.get("prompt_tokens", 0)
+                    if prompt_tokens > 0:
+                        extra_text = f"{round(prompt_tokens / 1000)}k / 1M"
+                except (json.JSONDecodeError, TypeError):
+                    LOG.warning(f"无法解析 llm_usage: {llm_usage_str}")
+
+            # 2. 将玩家选择和 GM 回应合并为一个 Markdown 字符串
+            combined_markdown = (
+                f"### 玩家选择 (Round {round_data['parent_id']} -> {round_data['round_id']})\n\n"
+                f"{round_data['player_choice']}\n\n"
+                f"---\n\n"
+                f"### GM 回应 (Round {round_data['round_id']})\n\n"
+                f"{round_data['assistant_response']}"
+            )
+
+            # 3. 将合并后的 Markdown 渲染为一张图片
+            image_bytes = await self.renderer.render_markdown(
+                combined_markdown,
+                extra_text=extra_text
+            )
+
+            # 4. 将图片附加到合并转发构造器中
+            if image_bytes:
+                node_content = MessageArray([Image(f"data:image/png;base64,{bytes_to_base64(image_bytes)}")])
+                fcr.attach(node_content)
+            else:
+                # 如果渲染失败，则回退到文本
+                fcr.attach(MessageArray([Text(f"[渲染失败]\n{combined_markdown}")]))
+
+        forward_msg = fcr.to_forward()
+        
+        await self.api.post_group_forward_msg(event.group_id, forward_msg)
 
     async def handle_branch_show(self, event: GroupMessageEvent, branch_name: str):
         """处理 /aigm branch show <name> 命令"""

@@ -183,6 +183,11 @@ class AIGMPlugin(NcatBotPlugin):
         if self.command_handler:
             await self.command_handler.handle_round_show(event, round_id)
 
+    @round_group.command("history", description="查看指定回合及其历史记录")
+    async def aigm_round_history(self, event: GroupMessageEvent, round_id: int, limit: int = 10):
+        if self.command_handler:
+            await self.command_handler.handle_round_history(event, round_id, limit)
+
     # --- Game Subcommands ---
     game_group = aigm_group.group("game", description="游戏管理")
 
