@@ -7,6 +7,6 @@ playwright
 aiohttp
 graphviz
 fastapi
-hypercorn
+uvicorn
 flaredantic
 jinja2

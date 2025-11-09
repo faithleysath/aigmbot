@@ -3,8 +3,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
-from hypercorn.asyncio import serve
-from hypercorn.config import Config
+import uvicorn
 from contextlib import asynccontextmanager
 from flaredantic import FlareTunnel
 
@@ -44,36 +43,24 @@ class WebUI:
         LOG.info("Web UI server is shutting down...")
 
     async def run_in_background(self):
-        """Run the FastAPI app with hypercorn."""
-        config = Config()
-        config.bind = ["127.0.0.1:8000"]
-        config.loglevel = "info"
+        """Run the FastAPI app with uvicorn."""
+        config = uvicorn.Config(
+            app=self.app,
+            host="127.0.0.1",
+            port=8000,
+            log_level="info",
+            loop="asyncio",
+        )
         
-        # 禁用信号处理器，因为我们在后台任务中运行
-        # 信号会由主进程处理，不需要在这里注册
-        config.worker_class = "asyncio"
-        config.use_reloader = False
+        server = uvicorn.Server(config)
         
         LOG.info("Starting Web UI server on http://127.0.0.1:8000")
         
         try:
-            await serve(self.app, config)  # type: ignore
-        except RuntimeError as e:
-            # 捕获并忽略在非主线程中注册信号处理器的错误
-            if "set_wakeup_fd" in str(e):
-                LOG.warning(
-                    f"Signal handler registration failed (expected in non-main thread): {e}. "
-                    f"Server shutdown will be handled by task cancellation."
-                )
-                # 让协程继续运行，直到被取消
-                # 由于我们在 main.py 的 on_close() 中取消任务，所以这是安全的
-                try:
-                    await asyncio.Event().wait()  # 永久等待，直到任务被取消
-                except asyncio.CancelledError:
-                    LOG.info("Web UI server task was cancelled, shutting down gracefully.")
-                    raise
-            else:
-                raise
+            await server.serve()
+        except asyncio.CancelledError:
+            LOG.info("Web UI server task was cancelled, shutting down gracefully.")
+            raise
 
     async def wait_for_tunnel(self, timeout: float = 10.0) -> bool:
         """
