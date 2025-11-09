@@ -167,7 +167,15 @@ class AIGMPlugin(NcatBotPlugin):
 
     async def on_close(self):
         """插件关闭时执行的操作"""
-        # 1. 取消 Web UI 任务
+        # 1. 停止 Web UI 服务器
+        if self.web_ui:
+            try:
+                await self.web_ui.shutdown()
+                LOG.info("Web UI server stopped successfully.")
+            except Exception as e:
+                LOG.error(f"Error stopping Web UI server: {e}", exc_info=True)
+        
+        # 2. 取消 Web UI 任务
         if self.web_ui_task and not self.web_ui_task.done():
             self.web_ui_task.cancel()
             try:
@@ -175,7 +183,7 @@ class AIGMPlugin(NcatBotPlugin):
             except asyncio.CancelledError:
                 LOG.info("Web UI task cancelled.")
         
-        # 2. 停止 Flare tunnel（如果存在）
+        # 3. 停止 Flare tunnel（如果存在）
         if self.web_ui and self.web_ui.tunnel:
             try:
                 self.web_ui.tunnel.stop()
@@ -183,11 +191,11 @@ class AIGMPlugin(NcatBotPlugin):
             except Exception as e:
                 LOG.error(f"Error stopping tunnel during shutdown: {e}", exc_info=True)
         
-        # 3. 关闭缓存管理器
+        # 4. 关闭缓存管理器
         if self.cache_manager:
             await self.cache_manager.shutdown()
         
-        # 4. 关闭数据库连接
+        # 5. 关闭数据库连接
         if self.db:
             await self.db.close()
         # 注释掉是因为renderer关闭的时候，因为它处于另一个事件循环中，所以无法正常关闭，会卡住关闭流程
