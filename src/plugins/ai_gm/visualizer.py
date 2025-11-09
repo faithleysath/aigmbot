@@ -97,13 +97,14 @@ class Visualizer:
                 
                 path_len = 0
                 curr = node_id
+                start_node = node_id  # 保存原始节点
                 while curr in parent_map and curr != root_node:
                     parent = parent_map[curr]
                     path_len += 1
                     
                     if parent in key_nodes:
                         edge_label = f" {path_len} round{'s' if path_len > 1 else ''} "
-                        dot.edge(str(parent), str(curr), label=edge_label)
+                        dot.edge(str(parent), str(start_node), label=edge_label)
                         break
                     curr = parent
 
