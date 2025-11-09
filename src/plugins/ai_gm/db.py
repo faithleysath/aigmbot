@@ -2,7 +2,8 @@ import aiosqlite
 from ncatbot.utils import get_log
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-import itertools
+import uuid
+import time
 
 from .constants import DB_BUSY_TIMEOUT_MS, DB_WAL_AUTOCHECKPOINT
 
@@ -16,7 +17,9 @@ class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.conn = None
-        self._savepoint_counter = itertools.count()
+        self._connection_healthy = True
+        self._last_health_check = 0.0
+        self._health_check_interval = 60.0  # 60秒检查一次连接健康
 
     async def connect(self):
         """连接到数据库并进行初始化"""
@@ -38,8 +41,7 @@ class Database:
         """
         确保数据库连接可用，如果连接断开则尝试重连。
         
-        此方法会测试连接是否可用，如果不可用则尝试重新连接。
-        应在所有数据库操作前调用此方法。
+        优化版本：减少不必要的健康检查，只在间隔时间后才测试连接。
         
         Raises:
             RuntimeError: 如果数据库未初始化或重连失败
@@ -49,16 +51,25 @@ class Database:
             await self.connect()
             return
         
+        # 只在间隔时间后才做健康检查
+        now = time.time()
+        if now - self._last_health_check < self._health_check_interval:
+            return
+        
         # 测试连接是否可用
         try:
             await self.conn.execute("SELECT 1")
+            self._last_health_check = now
+            self._connection_healthy = True
         except Exception as e:
-            LOG.warning(f"数据库连接测试失败: {e}，尝试重连...")
+            LOG.warning(f"数据库连接健康检查失败: {e}，尝试重连...")
+            self._connection_healthy = False
             try:
                 await self.close()
             except Exception:
                 pass
             await self.connect()
+            self._last_health_check = now
 
     async def close(self):
         """关闭数据库连接"""
@@ -197,6 +208,7 @@ class Database:
         提供支持嵌套的事务上下文管理器。
         
         嵌套事务通过 SAVEPOINT 实现。顶层事务使用 BEGIN IMMEDIATE。
+        改进版本：使用 UUID 生成 savepoint 名称，避免潜在的命名冲突。
         
         Yields:
             None
@@ -214,10 +226,8 @@ class Database:
 
         try:
             if depth > 0:
-                # Nested transaction: use savepoints
-                # 使用计数器生成安全的标识符（注意：这是全局计数器，确保唯一性）
-                savepoint_id = next(self._savepoint_counter)
-                savepoint_name = f"sp_{savepoint_id}"
+                # 嵌套事务：使用 UUID 生成唯一的 savepoint 名称
+                savepoint_name = f"sp_{uuid.uuid4().hex[:8]}"
                 try:
                     await self.conn.execute(f"SAVEPOINT {savepoint_name};")
                     yield
@@ -227,7 +237,7 @@ class Database:
                     await self.conn.execute(f"RELEASE SAVEPOINT {savepoint_name};")
                     raise
             else:
-                # Top-level transaction
+                # 顶层事务
                 try:
                     await self.conn.execute("BEGIN IMMEDIATE;")
                     yield
@@ -252,7 +262,6 @@ class Database:
         Raises:
             RuntimeError: 如果数据库连接失败
         """
-        await self._ensure_connection()
         if not self.conn:
             raise RuntimeError("数据库未连接")
         async with self.conn.execute(

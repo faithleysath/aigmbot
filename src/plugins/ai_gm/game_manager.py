@@ -8,7 +8,7 @@ from .renderer import MarkdownRenderer
 from .utils import EMOJI, bytes_to_base64
 from .cache import CacheManager
 from .content_fetcher import ContentFetcher
-from .exceptions import TipChangedError
+from .exceptions import TipChangedError, GameFrozenError
 from .constants import MAX_HISTORY_ROUNDS
 
 LOG = get_log(__name__)
@@ -226,7 +226,7 @@ class GameManager:
         """
         根据投票结果计票，并推进游戏到下一回合。
         
-        使用乐观锁机制防止并发冲突：在事务内验证 tip_round_id 未被修改。
+        改进版本：使用更严格的并发控制，在事务内立即检查并冻结游戏。
         
         Args:
             game_id: 游戏ID
@@ -238,29 +238,37 @@ class GameManager:
 
         channel_id = None
         main_message_id = None
+        system_prompt = None
+        head_branch_id = None
+        initial_tip_round_id = None
         
         try:
-            # 1. 先冻结游戏，防止其他操作
-            await self.db.set_game_frozen_status(game_id, True)
-            
-            # 2. 在单个事务内获取所有必要数据（读锁）
+            # 1. 在事务内立即检查冻结状态并设置冻结（原子操作）
             async with self.db.transaction():
                 game_data = await self.db.get_game_by_game_id(game_id)
                 if not game_data:
                     return
                 
+                # 检查游戏是否已冻结
+                if game_data["is_frozen"]:
+                    raise GameFrozenError("游戏已被其他操作锁定")
+                
+                # 立即冻结游戏（在同一事务内）
+                await self.db.set_game_frozen_status(game_id, True)
+                
+                # 获取必要信息
                 channel_id = str(game_data["channel_id"])
                 main_message_id = str(game_data["main_message_id"] or "")
                 system_prompt = game_data["system_prompt"]
                 head_branch_id = game_data["head_branch_id"]
                 
-                # 获取当前分支的 tip_round_id
+                # 获取并锁定当前分支的 tip_round_id
                 branch = await self.db.get_branch_by_id(head_branch_id)
                 if not branch:
-                    return
+                    raise RuntimeError("找不到 HEAD 分支")
                 initial_tip_round_id = branch["tip_round_id"]
 
-            # 3. 检查投票结果
+            # 2. 检查投票结果
             if not scores:
                 await self.api.post_group_msg(
                     channel_id, 
@@ -269,7 +277,7 @@ class GameManager:
                 )
                 return
 
-            # 4. 找出胜利者
+            # 3. 找出胜利者
             max_score = max(scores.values())
             winners = [k for k, v in scores.items() if v == max_score]
             winner_lines = []
@@ -287,7 +295,7 @@ class GameManager:
                 reply=main_message_id,
             )
 
-            # 5. 构建历史
+            # 4. 构建历史
             messages = await self._build_llm_history(system_prompt, initial_tip_round_id)
             if not messages:
                 await self.api.post_group_msg(channel_id, text="构建对话历史失败，游戏中断。")
@@ -296,7 +304,7 @@ class GameManager:
 
             await self.api.post_group_msg(channel_id, text="🛠 GM 正在思考下一步剧情...")
 
-            # 6. 调用LLM（可能耗时）
+            # 5. 调用LLM（可能耗时，在事务外进行）
             new_assistant_response, usage, model_name = await self.llm_api.get_completion(
                 cast(list[ChatCompletionMessageParam], messages)
             )
@@ -304,12 +312,12 @@ class GameManager:
                 await self.api.post_group_msg(channel_id, text="GM没有回应，游戏中断。")
                 return
 
-            # 7. 在事务内完成所有更新，使用乐观锁检查
+            # 6. 在事务内完成所有更新，使用乐观锁二次验证
             async with self.db.transaction():
                 # 再次获取分支状态，检查是否被并发修改
                 current_branch = await self.db.get_branch_by_id(head_branch_id)
                 if not current_branch or current_branch["tip_round_id"] != initial_tip_round_id:
-                    raise TipChangedError()
+                    raise TipChangedError("分支状态在处理期间被修改")
 
                 # 创建新回合
                 async with self.db.conn.cursor() as cursor:
@@ -331,11 +339,22 @@ class GameManager:
                 # 更新分支 tip
                 await self.db.update_branch_tip(head_branch_id, new_round_id)
 
-            # 8. 清理并进入下一轮
+            # 7. 清理并进入下一轮
             await self.cache_manager.clear_group_vote_cache(channel_id)
             await self.checkout_head(game_id)
+            
+            LOG.info(f"游戏 {game_id} 成功推进到回合 {new_round_id}")
 
-        except TipChangedError:
+        except GameFrozenError as e:
+            LOG.warning(f"游戏 {game_id} 已冻结: {e}")
+            if channel_id and main_message_id:
+                await self.api.post_group_msg(
+                    channel_id,
+                    text="正在处理其他操作，请稍后再试。",
+                    reply=main_message_id,
+                )
+        except TipChangedError as e:
+            LOG.warning(f"游戏 {game_id} 状态已变化: {e}")
             if channel_id and main_message_id:
                 await self.api.post_group_msg(
                     channel_id,
@@ -343,12 +362,17 @@ class GameManager:
                     reply=main_message_id,
                 )
         except Exception as e:
-            LOG.error(f"推进失败: {e}", exc_info=True)
+            LOG.error(f"推进游戏 {game_id} 失败: {e}", exc_info=True)
             if channel_id:
-                await self.api.post_group_msg(channel_id, text="推进失败，游戏已解冻，请重试。")
+                await self.api.post_group_msg(channel_id, text=f"❌ 推进失败: {e}")
         finally:
+            # 确保游戏最终被解冻
             if self.db:
-                await self.db.set_game_frozen_status(game_id, False)
+                try:
+                    await self.db.set_game_frozen_status(game_id, False)
+                    LOG.debug(f"游戏 {game_id} 已解冻")
+                except Exception as e:
+                    LOG.error(f"解冻游戏 {game_id} 失败: {e}", exc_info=True)
 
     async def revert_last_round(self, game_id: int):
         """

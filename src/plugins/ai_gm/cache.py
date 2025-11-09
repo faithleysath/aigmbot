@@ -5,7 +5,6 @@ import aiofiles
 import aiofiles.os as aio_os
 from typing import TypedDict, NotRequired
 import asyncio
-from copy import deepcopy
 
 from ncatbot.utils import get_log
 from .constants import CACHE_SAVE_DELAY_SECONDS
@@ -16,6 +15,7 @@ LOG = get_log(__name__)
 class VoteCacheItem(TypedDict):
     content: NotRequired[str]
     votes: dict[str, set[str]]
+    timestamp: NotRequired[datetime]
 
 
 class CacheManager:
@@ -28,6 +28,10 @@ class CacheManager:
         self._loaded = False  # 防止运行期被重复加载导致状态回退
         self._pending_save_task: asyncio.Task | None = None  # 待执行的保存任务
         self._save_requested = False  # 标记是否有保存请求
+        # 缓存清理相关
+        self._vote_cache_ttl = timedelta(hours=24)  # 投票缓存过期时间
+        self._last_cleanup = datetime.now(timezone.utc)
+        self._cleanup_interval = timedelta(hours=1)  # 清理间隔
 
     # --- Pending Games ---
     async def add_pending_game(self, message_id: str, game_data: dict):
@@ -72,14 +76,55 @@ class CacheManager:
         return expired_ids
 
     # --- Vote Cache ---
+    async def _maybe_cleanup_votes(self):
+        """定期清理过期投票缓存"""
+        now = datetime.now(timezone.utc)
+        if now - self._last_cleanup < self._cleanup_interval:
+            return
+        
+        async with self._cache_lock:
+            expired_groups = []
+            total_expired_messages = 0
+            
+            for group_id, messages in self.vote_cache.items():
+                expired_messages = []
+                for msg_id, item in messages.items():
+                    # 检查时间戳是否过期
+                    timestamp = item.get("timestamp")
+                    if timestamp and (now - timestamp) > self._vote_cache_ttl:
+                        expired_messages.append(msg_id)
+                
+                for msg_id in expired_messages:
+                    messages.pop(msg_id, None)
+                    total_expired_messages += 1
+                
+                if not messages:
+                    expired_groups.append(group_id)
+            
+            for group_id in expired_groups:
+                self.vote_cache.pop(group_id, None)
+            
+            self._last_cleanup = now
+            
+            if expired_groups or total_expired_messages:
+                LOG.info(f"清理了 {len(expired_groups)} 个空群组和 {total_expired_messages} 条过期投票")
+
     async def update_vote(
         self, group_id: str, message_id: str, emoji_id: str, user_id: str, is_add: bool
     ):
+        # 定期清理过期投票
+        await self._maybe_cleanup_votes()
+        
         async with self._cache_lock:
             group_cache = self.vote_cache.setdefault(group_id, {})
-            message_votes = group_cache.setdefault(message_id, {"votes": {}})
+            message_votes = group_cache.setdefault(message_id, {
+                "votes": {},
+                "timestamp": datetime.now(timezone.utc)  # 添加时间戳
+            })
             if "votes" not in message_votes:
                 message_votes["votes"] = {}
+            # 更新时间戳
+            message_votes["timestamp"] = datetime.now(timezone.utc)
             vote_set = message_votes["votes"].setdefault(emoji_id, set())
             if is_add:
                 vote_set.add(user_id)
@@ -100,22 +145,64 @@ class CacheManager:
         self, group_id: str, message_id: str
     ) -> VoteCacheItem | None:
         """
-        获取指定消息的投票缓存项（深拷贝）。
+        获取指定消息的投票缓存项（优化的浅拷贝）。
+        
+        优化：只拷贝 set 对象，字符串直接复用（不可变）。
         
         Args:
             group_id: 群组ID
             message_id: 消息ID
             
         Returns:
-            VoteCacheItem | None: 投票缓存项的深拷贝，如果不存在则返回 None
+            VoteCacheItem | None: 投票缓存项的副本，如果不存在则返回 None
         """
         async with self._cache_lock:
             item = self.vote_cache.get(group_id, {}).get(message_id)
-            return deepcopy(item) if item else None
+            if not item:
+                return None
+            
+            # 只拷贝 set，其他不可变类型直接复用
+            result: VoteCacheItem = {
+                "votes": {
+                    emoji_id: set(users)  # 创建新 set
+                    for emoji_id, users in item.get("votes", {}).items()
+                }
+            }
+            if "content" in item:
+                result["content"] = item["content"]  # 字符串不可变，直接复用
+            if "timestamp" in item:
+                result["timestamp"] = item["timestamp"]  # datetime 不可变，直接复用
+            return result
 
     async def get_group_vote_cache(self, group_id: str) -> dict[str, VoteCacheItem]:
+        """
+        获取指定群组的所有投票缓存（优化的拷贝）。
+        
+        Args:
+            group_id: 群组ID
+            
+        Returns:
+            dict[str, VoteCacheItem]: 该群组的投票缓存副本
+        """
         async with self._cache_lock:
-            return deepcopy(self.vote_cache.get(group_id, {}))
+            group_cache = self.vote_cache.get(group_id, {})
+            if not group_cache:
+                return {}
+            
+            # 只拷贝 set，其他不可变类型直接复用
+            result = {}
+            for msg_id, item in group_cache.items():
+                result[msg_id] = {
+                    "votes": {
+                        emoji_id: set(users)
+                        for emoji_id, users in item.get("votes", {}).items()
+                    }
+                }
+                if "content" in item:
+                    result[msg_id]["content"] = item["content"]
+                if "timestamp" in item:
+                    result[msg_id]["timestamp"] = item["timestamp"]
+            return result
 
     async def remove_vote_item(self, group_id: str, message_id: str):
         async with self._cache_lock:
@@ -239,6 +326,8 @@ class CacheManager:
         - 非强制模式：设置一个延迟定时器，期间的所有保存请求会被合并
         - 强制模式：立即执行保存，取消待执行的延迟任务
         
+        改进版本：防止重复创建延迟任务。
+        
         Args:
             force: 是否强制立即保存
         """
@@ -256,11 +345,15 @@ class CacheManager:
             self._pending_save_task = None
             await self._do_save_to_disk()
         else:
-            # 延迟保存：如果没有待执行的任务，创建一个
-            if not self._pending_save_task or self._pending_save_task.done():
+            # 延迟保存：防止重复创建任务
+            if self._pending_save_task and not self._pending_save_task.done():
+                # 已有任务在运行，标记有新的保存请求即可
                 self._save_requested = True
-                self._pending_save_task = asyncio.create_task(self._delayed_save_worker())
-            # 如果已有待执行的任务，本次请求会自动合并（无需操作）
+                return
+            
+            # 没有运行中的任务，创建新任务
+            self._save_requested = True
+            self._pending_save_task = asyncio.create_task(self._delayed_save_worker())
 
     async def shutdown(self):
         """

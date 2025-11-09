@@ -64,7 +64,7 @@ class LLM_API:
         """
         调用 OpenAI API 获取聊天完成结果，支持自动重试。
 
-        使用指数退避策略和抖动，防止雪崩效应。
+        改进版本：使用比例抖动策略和支持取消。
 
         Args:
             messages: 对话历史列表，格式为 [{"role": "user", "content": "..."}, ...]
@@ -77,6 +77,7 @@ class LLM_API:
             APITimeoutError: 超时错误（重试后仍失败）
             APIConnectionError: 连接错误（重试后仍失败）
             APIStatusError: 服务端错误（重试后仍失败）
+            asyncio.CancelledError: 操作被取消
             Exception: 其他意外错误
         """
         for attempt in range(self.max_retries):
@@ -105,10 +106,6 @@ class LLM_API:
                 APIStatusError,
             ) as e:
                 # 判断是否可重试
-                # 429 (Rate Limit) 总是可重试
-                # 408 (Request Timeout) 可重试
-                # 5xx (Server Error) 可重试
-                # 其他情况不重试
                 status_code = getattr(e, "status_code", 0)
                 retriable = (
                     isinstance(e, RateLimitError)  # 429 单独处理
@@ -123,11 +120,10 @@ class LLM_API:
                 
                 # 如果可重试且未达到最大重试次数
                 if retriable and attempt < self.max_retries - 1:
-                    # 指数退避 + 抖动，并限制最大延迟
-                    delay = min(
-                        self.base_delay * (2**attempt) + random.uniform(0, 0.5),
-                        self.max_delay
-                    )
+                    # 改进的延迟计算：基础延迟 + 指数退避 + 比例抖动
+                    base_delay = self.base_delay * (2 ** attempt)
+                    jitter = random.uniform(0, base_delay * 0.2)  # 20% 的抖动
+                    delay = min(base_delay + jitter, self.max_delay)
                     
                     # 根据错误类型提供更详细的日志
                     error_type = e.__class__.__name__
@@ -144,7 +140,13 @@ class LLM_API:
                             f"等待 {delay:.2f}s..."
                         )
                     
-                    await asyncio.sleep(delay)
+                    # 支持取消的等待
+                    try:
+                        await asyncio.sleep(delay)
+                    except asyncio.CancelledError:
+                        LOG.info("LLM 调用被取消")
+                        raise
+                    
                     continue
                 
                 # 不可重试或已达最大重试次数
@@ -152,6 +154,9 @@ class LLM_API:
                     LOG.error(f"调用 OpenAI API 失败，已达最大重试次数: {e}")
                 else:
                     LOG.error(f"调用 OpenAI API 时出现不可重试的错误 (status={status_code}): {e}")
+                raise
+            except asyncio.CancelledError:
+                LOG.info("LLM 调用被用户取消")
                 raise
             except Exception as e:
                 # 非 API 错误，不重试，直接抛出
