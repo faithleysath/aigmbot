@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from flaredantic import FlareTunnel
 
 from ncatbot.utils import get_log
+from markupsafe import Markup
 
 from .db import Database
 
@@ -19,6 +20,10 @@ class WebUI:
         self.plugin_data_path = plugin_data_path
         self.app = FastAPI(lifespan=self.lifespan)
         self.templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+        
+        # 注册自定义 Jinja2 过滤器
+        self.templates.env.filters['nl2br'] = self._nl2br
+        
         # Tunnel 相关属性由外部（main.py）管理
         self.tunnel: FlareTunnel | None = None
         self.tunnel_url: str | None = None
@@ -26,6 +31,13 @@ class WebUI:
         # 服务器线程
         self._server_thread: threading.Thread | None = None
         self._setup_routes()
+
+    @staticmethod
+    def _nl2br(value):
+        """将换行符转换为 <br> 标签的 Jinja2 过滤器"""
+        if not value:
+            return value
+        return Markup(str(value).replace('\n', '<br>\n'))
 
     def _setup_routes(self):
         self.app.add_api_route("/", self.route_game_list, methods=["GET"], response_class=HTMLResponse)
@@ -167,11 +179,11 @@ class WebUI:
                 if node["id"] == str(branch["tip_round_id"]):
                     is_head = branch['branch_id'] == head_branch_id
                     branch_label = f"🌿 {branch['name']}" + (" (HEAD)" if is_head else "")
-                    node["label"] += f"\\n{branch_label}"
+                    node["label"] += f"\n{branch_label}"
 
         for tag in all_tags:
             for node in nodes:
                 if node["id"] == str(tag["round_id"]):
-                    node["label"] += f"\\n🏷️ {tag['name']}"
+                    node["label"] += f"\n🏷️ {tag['name']}"
         
         return JSONResponse(content={"nodes": nodes, "edges": edges})
