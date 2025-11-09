@@ -189,26 +189,37 @@ class GameManager:
     async def _build_llm_history(
         self, system_prompt: str, tip_round_id: int
     ) -> list[ChatCompletionMessageParam] | None:
-        """从数据库构建用于 LLM 的对话历史"""
+        """
+        从数据库构建用于 LLM 的对话历史。
+        
+        使用递归 CTE 一次性获取所有祖先回合，避免 N+1 查询问题。
+        
+        Args:
+            system_prompt: 系统提示词
+            tip_round_id: 当前回合ID
+            
+        Returns:
+            完整的对话历史列表，如果失败则返回 None
+        """
         if not self.db:
             return None
 
-        history: list[ChatCompletionMessageParam] = []
-        current_round_id = tip_round_id
-        while current_round_id != -1:
-            round_data = await self.db.get_round_info(current_round_id)
-            if not round_data:
-                break
-            history.append(
-                {"role": "assistant", "content": round_data["assistant_response"]}
-            )
-            history.append({"role": "user", "content": round_data["player_choice"]})
-            current_round_id = round_data["parent_id"]
-
+        # 使用递归 CTE 一次性获取所有历史回合
+        # limit 设置为 999999，对于实际游戏来说是事实上的无限
+        rounds = await self.db.get_round_ancestors(tip_round_id, limit=999999)
+        
+        if not rounds:
+            return None
+        
+        # 构建消息列表（rounds 已经按时间正序排列：从最早到最新）
         messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": system_prompt}
         ]
-        messages.extend(reversed(history))
+        
+        for round_data in rounds:
+            messages.append({"role": "user", "content": round_data["player_choice"]})
+            messages.append({"role": "assistant", "content": round_data["assistant_response"]})
+        
         return messages
 
     async def tally_and_advance(self, game_id: int, scores: dict, result_lines: list[str]):
