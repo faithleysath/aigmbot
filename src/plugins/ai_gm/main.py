@@ -8,6 +8,7 @@ from ncatbot.core.event import GroupMessageEvent, NoticeEvent
 from ncatbot.core.event.message_segment import At
 from ncatbot.utils import get_log
 from pathlib import Path
+from typing import Optional
 
 from .db import Database
 from .llm_api import LLM_API
@@ -178,7 +179,7 @@ class AIGMPlugin(NcatBotPlugin):
     branch_group = aigm_group.group("branch", description="分支管理")
 
     @branch_group.command("list", description="可视化显示当前游戏的分支")
-    async def aigm_branch_list(self, event: GroupMessageEvent, mode: str | None = None):
+    async def aigm_branch_list(self, event: GroupMessageEvent, mode: Optional[str] = None):
         if self.command_handler:
             await self.command_handler.handle_branch_list(event, mode)
 
@@ -188,13 +189,13 @@ class AIGMPlugin(NcatBotPlugin):
             await self.command_handler.handle_branch_show(event, branch_name)
 
     @branch_group.command("history", description="查看指定分支的历史记录")
-    async def aigm_branch_history(self, event: GroupMessageEvent, branch_name: str | None = None, limit: int = 10):
+    async def aigm_branch_history(self, event: GroupMessageEvent, branch_name: Optional[str] = None, limit: int = 10):
         if self.command_handler:
             await self.command_handler.handle_branch_history(event, branch_name, limit)
 
     @branch_group.command("create", description="创建新分支")
     async def aigm_branch_create(
-        self, event: GroupMessageEvent, name: str, from_round_id: int | None = None
+        self, event: GroupMessageEvent, name: str, from_round_id: Optional[int] = None
     ):
         if self.command_handler:
             await self.command_handler.handle_branch_create(event, name, from_round_id)
@@ -214,7 +215,7 @@ class AIGMPlugin(NcatBotPlugin):
 
     @tag_group.command("create", description="创建新标签")
     async def aigm_tag_create(
-        self, event: GroupMessageEvent, name: str, round_id: int | None = None
+        self, event: GroupMessageEvent, name: str, round_id: Optional[int] = None
     ):
         if self.command_handler:
             await self.command_handler.handle_tag_create(event, name, round_id)
