@@ -5,7 +5,8 @@ aiofiles
 markdown-it-py
 playwright
 aiohttp
-aiohttp-jinja2
 graphviz
+fastapi
+hypercorn
 flaredantic
 jinja2
