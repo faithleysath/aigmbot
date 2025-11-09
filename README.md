@@ -93,6 +93,12 @@ AIGMPlugin:
 - `tag create <name> [round_id]` - 为某个回合创建一个永久标签。
 - `round show <id>` - 查看特定 ID 回合的详细内容。
 
+#### 管理员命令 (`/aigm admin ...`)
+
+- `admin unfreeze` - [群管理/ROOT] 强制解冻当前游戏。
+- `admin refresh-tunnel` - [ROOT] 重新刷新 Cloudflare tunnel，用于 Web UI 访问异常时恢复连接。
+- `admin delete <id>` - [ROOT] 删除指定 ID 的游戏。
+
 ### 投票机制
 
 - **预设选项**：机器人发送的故事消息下方会有一系列字母表情（🅰️, 🅱️, ...），点击即可为对应选项投票。
