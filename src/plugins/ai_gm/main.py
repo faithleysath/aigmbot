@@ -8,7 +8,6 @@ from ncatbot.core.event import GroupMessageEvent, NoticeEvent
 from ncatbot.core.event.message_segment import At
 from ncatbot.utils import get_log
 from pathlib import Path
-from typing import Optional
 
 from .db import Database
 from .llm_api import LLM_API
@@ -179,7 +178,7 @@ class AIGMPlugin(NcatBotPlugin):
     branch_group = aigm_group.group("branch", description="分支管理")
 
     @branch_group.command("list", description="可视化显示当前游戏的分支")
-    async def aigm_branch_list(self, event: GroupMessageEvent, mode: Optional[str] = None):
+    async def aigm_branch_list(self, event: GroupMessageEvent, mode: str = ""):
         if self.command_handler:
             await self.command_handler.handle_branch_list(event, mode)
 
@@ -189,16 +188,19 @@ class AIGMPlugin(NcatBotPlugin):
             await self.command_handler.handle_branch_show(event, branch_name)
 
     @branch_group.command("history", description="查看指定分支的历史记录")
-    async def aigm_branch_history(self, event: GroupMessageEvent, branch_name: Optional[str] = None, limit: int = 10):
+    async def aigm_branch_history(self, event: GroupMessageEvent, branch_name: str = "", limit: int = 10):
         if self.command_handler:
             await self.command_handler.handle_branch_history(event, branch_name, limit)
 
     @branch_group.command("create", description="创建新分支")
     async def aigm_branch_create(
-        self, event: GroupMessageEvent, name: str, from_round_id: Optional[int] = None
+        self, event: GroupMessageEvent, name: str, from_round_id: int = -1
     ):
         if self.command_handler:
-            await self.command_handler.handle_branch_create(event, name, from_round_id)
+            actual_from_round_id = from_round_id if from_round_id != -1 else None
+            await self.command_handler.handle_branch_create(
+                event, name, actual_from_round_id
+            )
 
     @branch_group.command("rename", description="重命名分支")
     async def aigm_branch_rename(self, event: GroupMessageEvent, old_name: str, new_name: str):
@@ -215,10 +217,11 @@ class AIGMPlugin(NcatBotPlugin):
 
     @tag_group.command("create", description="创建新标签")
     async def aigm_tag_create(
-        self, event: GroupMessageEvent, name: str, round_id: Optional[int] = None
+        self, event: GroupMessageEvent, name: str, round_id: int = -1
     ):
         if self.command_handler:
-            await self.command_handler.handle_tag_create(event, name, round_id)
+            actual_round_id = round_id if round_id != -1 else None
+            await self.command_handler.handle_tag_create(event, name, actual_round_id)
 
     @tag_group.command("list", description="列出所有标签")
     async def aigm_tag_list(self, event: GroupMessageEvent):
