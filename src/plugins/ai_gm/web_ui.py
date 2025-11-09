@@ -3,7 +3,8 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
-import uvicorn
+from hypercorn.asyncio import serve
+from hypercorn.config import Config
 from contextlib import asynccontextmanager
 from flaredantic import FlareTunnel
 
@@ -43,10 +44,11 @@ class WebUI:
         LOG.info("Web UI server is shutting down...")
 
     async def run_in_background(self):
-        """Run the FastAPI app."""
-        config = uvicorn.Config(self.app, host="127.0.0.1", port=8000, log_level="info")
-        server = uvicorn.Server(config)
-        await server.serve()
+        """Run the FastAPI app with hypercorn."""
+        config = Config()
+        config.bind = ["127.0.0.1:8000"]
+        config.loglevel = "info"
+        await serve(self.app, config)  # type: ignore
 
     async def wait_for_tunnel(self, timeout: float = 10.0) -> bool:
         """
