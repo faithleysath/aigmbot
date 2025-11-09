@@ -15,6 +15,7 @@ from .visualizer import Visualizer
 from .renderer import MarkdownRenderer
 from .utils import bytes_to_base64
 from .constants import HISTORY_MAX_LIMIT
+from .web_ui import WebUI
 
 LOG = get_log(__name__)
 
@@ -28,8 +29,10 @@ class CommandHandler:
         cache_manager: CacheManager,
         visualizer: Visualizer,
         renderer: MarkdownRenderer,
+        web_ui: WebUI | None = None,
     ):
         self.plugin = plugin
+        self.web_ui = web_ui
         self.api = plugin.api
         self.db = db
         self.game_manager = game_manager
@@ -162,8 +165,27 @@ class CommandHandler:
 管理员命令:
 /aigm admin unfreeze - [群管理/ROOT] 强制解冻当前游戏
 /aigm admin delete <id> - [ROOT] 删除指定ID的游戏
+/aigm webui - 获取当前游戏的 Web UI 地址
         """
         await event.reply(help_text.strip(), at=False)
+
+    async def handle_webui(self, event: GroupMessageEvent):
+        """处理 /aigm webui 命令"""
+        if not self.web_ui or not self.web_ui.tunnel_url:
+            await event.reply("Web UI 正在启动中或启动失败，请稍后再试。", at=False)
+            return
+
+        base_url = self.web_ui.tunnel_url
+        game = await self.db.get_game_by_channel_id(str(event.group_id))
+        
+        if game:
+            url = f"{base_url}/game/{game['game_id']}"
+            message = f"当前游戏的 Web UI 地址:\n{url}"
+        else:
+            url = base_url
+            message = f"Web UI 入口地址:\n{url}"
+            
+        await event.reply(message, at=False)
 
     async def handle_status(self, event: GroupMessageEvent, api: BotAPI):
         """处理 /aigm status 命令"""

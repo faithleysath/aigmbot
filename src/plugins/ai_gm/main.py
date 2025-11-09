@@ -18,6 +18,8 @@ from .event_handler import EventHandler
 from .content_fetcher import ContentFetcher
 from .commands import CommandHandler
 from .visualizer import Visualizer
+from .web_ui import WebUI
+import asyncio
 
 LOG = get_log(__name__)
 
@@ -38,6 +40,8 @@ class AIGMPlugin(NcatBotPlugin):
         self.event_handler: EventHandler | None = None
         self.command_handler: CommandHandler | None = None
         self.visualizer: Visualizer | None = None
+        self.web_ui: WebUI | None = None
+        self.web_ui_task: asyncio.Task | None = None
         self.data_path: Path = Path()
 
     async def on_load(self):
@@ -100,6 +104,9 @@ class AIGMPlugin(NcatBotPlugin):
         await self.cache_manager.load_from_disk()
 
         if self.db and self.llm_api and self.renderer and self.cache_manager:
+            self.web_ui = WebUI(self.db, data_dir)
+            self.web_ui_task = asyncio.create_task(self.web_ui.run_in_background())
+
             self.visualizer = Visualizer(self.db)
             content_fetcher = ContentFetcher(self, self.cache_manager)
             self.game_manager = GameManager(
@@ -117,6 +124,7 @@ class AIGMPlugin(NcatBotPlugin):
                 self.cache_manager,
                 self.visualizer,
                 self.renderer,
+                web_ui=self.web_ui,
             )
             self.event_handler = EventHandler(
                 self,
@@ -134,6 +142,12 @@ class AIGMPlugin(NcatBotPlugin):
 
     async def on_close(self):
         """插件关闭时执行的操作"""
+        if self.web_ui_task and not self.web_ui_task.done():
+            self.web_ui_task.cancel()
+            try:
+                await self.web_ui_task
+            except asyncio.CancelledError:
+                LOG.info("Web UI task cancelled.")
         if self.cache_manager:
             await self.cache_manager.shutdown()
         if self.db:
@@ -173,6 +187,11 @@ class AIGMPlugin(NcatBotPlugin):
     async def aigm_status(self, event: GroupMessageEvent):
         if self.command_handler:
             await self.command_handler.handle_status(event, self.api)
+
+    @aigm_group.command("webui", description="获取 Web UI 地址")
+    async def aigm_webui(self, event: GroupMessageEvent):
+        if self.command_handler:
+            await self.command_handler.handle_webui(event)
 
     # --- Branch Subcommands ---
     branch_group = aigm_group.group("branch", description="分支管理")

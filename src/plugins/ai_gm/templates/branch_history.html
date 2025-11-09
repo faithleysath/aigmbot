@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}History for {{ branch.name }} - AI GM Web UI{% endblock %}
+
+{% block content %}
+    <div class="nav">
+        <a href="/game/{{ game_id }}">&larr; Back to Game Details</a>
+    </div>
+
+    <h2>History for Branch: 🌿 {{ branch.name }}</h2>
+
+    {% if history %}
+        {% for round in history %}
+            <div class="card">
+                <h4>
+                    <a href="/game/{{ game_id }}/round/{{ round.round_id }}">
+                        Round #{{ round.round_id }}
+                    </a>
+                </h4>
+                <p><strong>Player Choice:</strong></p>
+                <pre><code>{{ round.player_choice }}</code></pre>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p>No history found for this branch.</p>
+    {% endif %}
+{% endblock %}

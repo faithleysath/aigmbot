@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Game #{{ game.game_id }} - AI GM Web UI{% endblock %}
+
+{% block content %}
+    <div class="nav">
+        <a href="/">&larr; Back to Game List</a>
+    </div>
+
+    <h2>Game #{{ game.game_id }} Details</h2>
+    <a href="/game/{{ game.game_id }}/graph" class="button">View Branch Graph</a>
+
+    <h3>Branches</h3>
+    {% if branches %}
+        {% for branch in branches %}
+            <div class="card">
+                <h4>
+                    <a href="/game/{{ game.game_id }}/branch/{{ branch.name }}/history">
+                        🌿 {{ branch.name }}
+                        {% if branch.branch_id == game.head_branch_id %}
+                            <span style="color: var(--primary-color);">(HEAD)</span>
+                        {% endif %}
+                    </a>
+                </h4>
+                <p>Tip at Round: {{ branch.tip_round_id }}</p>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p>No branches found for this game.</p>
+    {% endif %}
+
+    <h3>Tags</h3>
+    {% if tags %}
+        {% for tag in tags %}
+            <div class="card">
+                <h5>
+                    <a href="/game/{{ game.game_id }}/round/{{ tag.round_id }}">
+                        🏷️ {{ tag.name }}
+                    </a>
+                </h5>
+                <p>Points to Round: {{ tag.round_id }}</p>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p>No tags found for this game.</p>
+    {% endif %}
+{% endblock %}

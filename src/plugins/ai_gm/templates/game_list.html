@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}Game List - AI GM Web UI{% endblock %}
+
+{% block content %}
+    <h2>Game List</h2>
+    {% if games %}
+        {% for game in games %}
+            <div class="card">
+                <h3><a href="/game/{{ game.game_id }}">Game #{{ game.game_id }}</a></h3>
+                <p><strong>Host:</strong> {{ game.host_user_id }}</p>
+                <p><strong>Channel:</strong> {{ game.channel_id or 'Not Attached' }}</p>
+                <p><strong>Created:</strong> {{ game.created_at }}</p>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p>No games found.</p>
+    {% endif %}
+{% endblock %}

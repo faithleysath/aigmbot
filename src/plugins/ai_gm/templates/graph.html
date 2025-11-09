@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}Branch Graph for Game #{{ game_id }} - AI GM Web UI{% endblock %}
+
+{% block head %}
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+{% endblock %}
+
+{% block content %}
+    <div class="nav">
+        <a href="/game/{{ game_id }}">&larr; Back to Game Details</a>
+    </div>
+
+    <h2>Branch Graph for Game #{{ game_id }}</h2>
+
+    <div id="graph-container" style="text-align: center;">
+        <div class="mermaid">
+            graph TD;
+                A[Loading graph...];
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({ startOnLoad: true, theme: 'dark' });
+
+        async function fetchAndRenderGraph() {
+            try {
+                const response = await fetch('/game/{{ game_id }}/graph-data');
+                if (!response.ok) {
+                    throw new Error('Failed to fetch graph data');
+                }
+                const data = await response.json();
+                
+                let mermaidDefinition = 'graph TD;\\n';
+
+                data.nodes.forEach(node => {
+                    // Sanitize label for Mermaid syntax
+                    const sanitizedLabel = node.label.replace(/"/g, '#quot;').replace(/\\n/g, '<br/>');
+                    mermaidDefinition += `    ${node.id}("${sanitizedLabel}");\\n`;
+                });
+
+                data.edges.forEach(edge => {
+                    mermaidDefinition += `    ${edge.from} --> ${edge.to};\\n`;
+                });
+
+                const container = document.querySelector('.mermaid');
+                container.innerHTML = mermaidDefinition;
+                
+                // Tell Mermaid to render the new content
+                await mermaid.run({
+                    nodes: [container]
+                });
+
+            } catch (error) {
+                console.error('Error rendering graph:', error);
+                const container = document.querySelector('.mermaid');
+                container.innerHTML = 'graph TD; A[Error loading graph];';
+                await mermaid.run({
+                    nodes: [container]
+                });
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', fetchAndRenderGraph);
+    </script>
+{% endblock %}

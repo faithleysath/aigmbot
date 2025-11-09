@@ -781,3 +781,19 @@ class Database:
         async with self.conn.execute(query, (round_id, limit - 1)) as cursor:
             rows = await cursor.fetchall()
             return list(rows)
+
+    async def get_child_rounds(self, round_id: int) -> list[aiosqlite.Row]:
+        """
+        获取一个回合的所有子回合。
+        
+        Args:
+            round_id: 父回合ID
+            
+        Returns:
+            list[aiosqlite.Row]: 子回合列表
+        """
+        await self._ensure_conn_or_raise()
+        assert self.conn is not None
+        query = "SELECT round_id FROM rounds WHERE parent_id = ? ORDER BY round_id ASC"
+        async with self.conn.execute(query, (round_id,)) as cursor:
+            return list(await cursor.fetchall())

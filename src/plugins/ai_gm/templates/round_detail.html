@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Round #{{ round.round_id }} - AI GM Web UI{% endblock %}
+
+{% block content %}
+    <div class="nav">
+        <a href="{{ request.headers.get('referer', '/game/' + game_id|string) }}">&larr; Back</a>
+    </div>
+
+    <h2>Round #{{ round.round_id }}</h2>
+
+    <div class="card">
+        <h3>Player Choice</h3>
+        <pre><code>{{ round.player_choice }}</code></pre>
+    </div>
+
+    <div class="card">
+        <h3>GM Response</h3>
+        <div>{{ round.assistant_response | nl2br }}</div>
+    </div>
+
+    <div class="nav" style="display: flex; justify-content: space-between; margin-top: 2rem;">
+        {% if prev_round_id %}
+            <a href="/game/{{ game_id }}/round/{{ prev_round_id }}" class="button">&larr; Previous Round</a>
+        {% else %}
+            <span>&nbsp;</span>
+        {% endif %}
+        
+        {% if next_round_id %}
+            <a href="/game/{{ game_id }}/round/{{ next_round_id }}" class="button">Next Round &rarr;</a>
+        {% endif %}
+    </div>
+{% endblock %}
