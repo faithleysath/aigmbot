@@ -4,6 +4,7 @@ from ncatbot.core.event import GroupMessageEvent
 from ncatbot.core.event.message_segment import At, MessageArray, Text, Reply
 from ncatbot.core.api import BotAPI
 from ncatbot.utils import get_log
+import json
 
 from .db import Database
 from .game_manager import GameManager
@@ -148,10 +149,20 @@ class CommandHandler:
         if not round_info:
             await event.reply(f"找不到 ID 为 {round_id} 的回合。", at=False)
             return
-
+        llm_usage_str = round_info["llm_usage"]
+        extra_text = None
+        if llm_usage_str:
+            try:
+                usage = json.loads(llm_usage_str)
+                prompt_tokens = usage.get("prompt_tokens", 0)
+                if prompt_tokens > 0:
+                    extra_text = f"{round(prompt_tokens / 1000)}k / 1M"
+            except (json.JSONDecodeError, TypeError):
+                LOG.warning(f"无法解析 llm_usage: {llm_usage_str}")
         await event.reply(f"正在渲染 Round {round_id} 的内容...", at=False)
         image_bytes = await self.renderer.render_markdown(
-            round_info["assistant_response"]
+            round_info["assistant_response"],
+            extra_text=extra_text
         )
 
         if image_bytes:
