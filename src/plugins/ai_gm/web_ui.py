@@ -46,10 +46,10 @@ class WebUI:
             )
             self.tunnel = FlareTunnel(config)
             
-            # 在线程池中启动 tunnel，避免阻塞事件循环
+            # 直接调用 start()，不使用 run_in_executor
+            # 这允许 cloudflared 子进程正确地与父进程通信并捕获输出
             LOG.info("Starting Flare tunnel (this may take a while on first run)...")
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self.tunnel.start)
+            self.tunnel.start()
             
             self.tunnel_url = self.tunnel.tunnel_url
             if self.tunnel_url:
