@@ -21,6 +21,24 @@ HISTORY_MAX_LIMIT = 10
 
 
 class CommandHandler:
+    def __init__(
+        self,
+        plugin: NcatBotPlugin,
+        db: Database,
+        game_manager: GameManager,
+        cache_manager: CacheManager,
+        visualizer: Visualizer,
+        renderer: MarkdownRenderer,
+    ):
+        self.plugin = plugin
+        self.api = plugin.api
+        self.db = db
+        self.game_manager = game_manager
+        self.cache_manager = cache_manager
+        self.visualizer = visualizer
+        self.renderer = renderer
+        self.rbac_manager = plugin.rbac_manager
+
     async def _validate_name(self, name: str) -> bool:
         """验证分支或标签名称的格式"""
         if not name or len(name) > 50:
@@ -64,23 +82,40 @@ class CommandHandler:
 
         return False
 
-    def __init__(
-        self,
-        plugin: NcatBotPlugin,
-        db: Database,
-        game_manager: GameManager,
-        cache_manager: CacheManager,
-        visualizer: Visualizer,
-        renderer: MarkdownRenderer,
-    ):
-        self.plugin = plugin
-        self.api = plugin.api
-        self.db = db
-        self.game_manager = game_manager
-        self.cache_manager = cache_manager
-        self.visualizer = visualizer
-        self.renderer = renderer
-        self.rbac_manager = plugin.rbac_manager
+    def _check_is_game_host(self, user_id: str, game_host_id: str) -> bool:
+        """
+        检查用户是否是指定游戏的主持人。
+        
+        这是一个纯函数，用于避免代码重复。
+        
+        Args:
+            user_id: 要检查的用户ID
+            game_host_id: 游戏的主持人ID
+            
+        Returns:
+            bool: 如果用户是游戏主持人返回 True，否则返回 False
+        """
+        return str(game_host_id) == user_id
+
+    def _check_has_root_or_admin(
+        self, user_id: str, sender_role: str | None
+    ) -> bool:
+        """
+        检查用户是否是 Root 用户或群管理员。
+        
+        这是一个纯函数，用于避免代码重复。
+        
+        Args:
+            user_id: 用户ID
+            sender_role: 发送者在群组中的角色 (admin/owner/member)
+            
+        Returns:
+            bool: 如果用户是 Root 或群管理员返回 True，否则返回 False
+        """
+        return (
+            self.rbac_manager.user_has_role(user_id, "root")
+            or sender_role in ["admin", "owner"]
+        )
 
     async def _get_channel_game(self, event: GroupMessageEvent):
         """获取当前频道的游戏，如果不存在则回复用户并返回 None"""

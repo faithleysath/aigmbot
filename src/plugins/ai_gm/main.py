@@ -48,7 +48,13 @@ class AIGMPlugin(NcatBotPlugin):
         self.register_config("openai_api_key", "YOUR_API_KEY_HERE")
         self.register_config("openai_base_url", "https://api.openai.com/v1")
         self.register_config("openai_model_name", "gpt-4-turbo")
+        self.register_config("openai_max_retries", 2, "LLM API 最大重试次数")
+        self.register_config("openai_base_delay", 1.0, "LLM API 基础重试延迟（秒）")
+        self.register_config("openai_max_delay", 30.0, "LLM API 最大重试延迟（秒）")
+        self.register_config("openai_timeout", 60.0, "LLM API 调用超时时间（秒）")
         self.register_config("pending_game_timeout", 300, "新游戏等待确认的超时时间（秒）")
+        # TODO: 实现并发渲染限制机制
+        self.register_config("max_concurrent_renders", 3, "最大并发渲染数量（预留配置）")
         LOG.debug(f"[{self.name}] 配置项注册完毕。")
 
         # 2. 初始化路径和数据库
@@ -68,8 +74,19 @@ class AIGMPlugin(NcatBotPlugin):
                 raise ValueError("OpenAI API key is not configured.")
             base_url = self.config.get("openai_base_url", "https://api.openai.com/v1")
             model_name = self.config.get("openai_model_name", "gpt-4-turbo")
+            max_retries = int(self.config.get("openai_max_retries", 2))
+            base_delay = float(self.config.get("openai_base_delay", 1.0))
+            max_delay = float(self.config.get("openai_max_delay", 30.0))
+            timeout = float(self.config.get("openai_timeout", 60.0))
+            
             self.llm_api = LLM_API(
-                api_key=api_key, base_url=base_url, model_name=model_name
+                api_key=api_key,
+                base_url=base_url,
+                model_name=model_name,
+                max_retries=max_retries,
+                base_delay=base_delay,
+                max_delay=max_delay,
+                timeout=timeout,
             )
         except ValueError as e:
             LOG.error(f"LLM API 初始化失败: {e}")
