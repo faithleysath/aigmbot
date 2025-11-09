@@ -1,9 +1,9 @@
 import asyncio
+import threading
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
-import uvicorn
 from contextlib import asynccontextmanager
 from flaredantic import FlareTunnel
 
@@ -23,6 +23,8 @@ class WebUI:
         self.tunnel: FlareTunnel | None = None
         self.tunnel_url: str | None = None
         self.tunnel_ready = asyncio.Event()
+        # 服务器线程
+        self._server_thread: threading.Thread | None = None
         self._setup_routes()
 
     def _setup_routes(self):
@@ -42,25 +44,38 @@ class WebUI:
         # Shutdown
         LOG.info("Web UI server is shutting down...")
 
-    async def run_in_background(self):
-        """Run the FastAPI app with uvicorn."""
-        config = uvicorn.Config(
-            app=self.app,
-            host="127.0.0.1",
-            port=8000,
-            log_level="info",
-            loop="asyncio",
-        )
+    def start_server(self):
+        """在独立线程中启动 Web UI 服务器"""
+        def run_server():
+            LOG.info("Starting Web UI server on http://127.0.0.1:8000")
+            
+            # 在新线程中创建新的事件循环
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            from hypercorn.asyncio import serve
+            from hypercorn.config import Config
+            
+            config = Config()
+            config.bind = ["127.0.0.1:8000"]
+            config.loglevel = "info"
+            
+            try:
+                loop.run_until_complete(serve(self.app, config)) # type: ignore
+            except Exception as e:
+                LOG.error(f"Web UI server error: {e}", exc_info=True)
+            finally:
+                loop.close()
         
-        server = uvicorn.Server(config)
-        
-        LOG.info("Starting Web UI server on http://127.0.0.1:8000")
-        
-        try:
-            await server.serve()
-        except asyncio.CancelledError:
-            LOG.info("Web UI server task was cancelled, shutting down gracefully.")
-            raise
+        self._server_thread = threading.Thread(target=run_server, daemon=True, name="WebUI-Server")
+        self._server_thread.start()
+        LOG.info("Web UI server thread started")
+
+    def stop_server(self):
+        """停止 Web UI 服务器"""
+        if self._server_thread and self._server_thread.is_alive():
+            LOG.info("Web UI server will be cleaned up automatically (daemon thread)")
+            # daemon 线程会在主进程退出时自动清理
 
     async def wait_for_tunnel(self, timeout: float = 10.0) -> bool:
         """

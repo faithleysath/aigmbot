@@ -41,7 +41,6 @@ class AIGMPlugin(NcatBotPlugin):
         self.command_handler: CommandHandler | None = None
         self.visualizer: Visualizer | None = None
         self.web_ui: WebUI | None = None
-        self.web_ui_task: asyncio.Task | None = None
         self.data_path: Path = Path()
 
     async def on_load(self):
@@ -129,8 +128,8 @@ class AIGMPlugin(NcatBotPlugin):
             finally:
                 self.web_ui.tunnel_ready.set()
             
-            # 启动 Web UI 服务器
-            self.web_ui_task = asyncio.create_task(self.web_ui.run_in_background())
+            # 启动 Web UI 服务器（同步调用，服务器在独立线程中运行）
+            self.web_ui.start_server()
 
             self.visualizer = Visualizer(self.db)
             content_fetcher = ContentFetcher(self, self.cache_manager)
@@ -167,21 +166,9 @@ class AIGMPlugin(NcatBotPlugin):
 
     async def on_close(self):
         """插件关闭时执行的操作"""
-        # 1. 取消 Web UI 任务（检查事件循环状态）
-        if self.web_ui_task and not self.web_ui_task.done():
-            try:
-                # 检查事件循环是否还在运行
-                loop = asyncio.get_event_loop()
-                if not loop.is_closed():
-                    self.web_ui_task.cancel()
-                    try:
-                        await self.web_ui_task
-                    except asyncio.CancelledError:
-                        LOG.info("Web UI task cancelled.")
-                else:
-                    LOG.warning("Event loop is already closed, cannot cancel Web UI task gracefully.")
-            except RuntimeError as e:
-                LOG.warning(f"Failed to cancel Web UI task: {e}")
+        # 1. 停止 Web UI 服务器
+        if self.web_ui:
+            self.web_ui.stop_server()
         
         # 2. 停止 Flare tunnel（如果存在）
         if self.web_ui and self.web_ui.tunnel:
