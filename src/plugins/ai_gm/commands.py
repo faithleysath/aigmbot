@@ -175,16 +175,16 @@ class CommandHandler:
             await event.reply("Web UI 未启用。", at=False)
             return
         
-        # 等待 tunnel 就绪（最多等待 5 秒）
+        # 等待 tunnel 就绪（最多等待 60 秒，首次启动需要下载 cloudflared）
         if not self.web_ui.tunnel_ready.is_set():
-            await event.reply("Web UI 正在启动中，请稍后再试...", at=False)
-            tunnel_ready = await self.web_ui.wait_for_tunnel(timeout=5.0)
+            await event.reply("⏳ Web UI 正在启动中，首次启动可能需要下载必要的组件，请稍候...", at=False)
+            tunnel_ready = await self.web_ui.wait_for_tunnel(timeout=60.0)
             if not tunnel_ready:
-                await event.reply("Web UI 启动失败或超时，请检查日志。", at=False)
+                await event.reply("❌ Web UI 启动超时，请稍后重试或检查日志获取详细信息。", at=False)
                 return
         
         if not self.web_ui.tunnel_url:
-            await event.reply("Web UI 启动失败，请检查日志。", at=False)
+            await event.reply("❌ Web UI 启动失败，请检查日志获取详细信息。", at=False)
             return
 
         base_url = self.web_ui.tunnel_url
@@ -192,10 +192,10 @@ class CommandHandler:
         
         if game:
             url = f"{base_url}/game/{game['game_id']}"
-            message = f"当前游戏的 Web UI 地址:\n{url}"
+            message = f"✅ 当前游戏的 Web UI 地址:\n{url}"
         else:
             url = base_url
-            message = f"Web UI 入口地址:\n{url}"
+            message = f"✅ Web UI 入口地址:\n{url}"
             
         await event.reply(message, at=False)
 

@@ -37,22 +37,32 @@ class WebUI:
         # Startup
         LOG.info("Web UI is starting up...")
         try:
+            LOG.info("Configuring Flare tunnel...")
             config = FlareConfig(
                 port=8000,
                 bin_dir=self.plugin_data_path / "bin",
+                timeout=60,  # 增加超时时间，首次启动需要下载 cloudflared
                 verbose=True
             )
             self.tunnel = FlareTunnel(config)
-            self.tunnel.start()
+            
+            # 在线程池中启动 tunnel，避免阻塞事件循环
+            LOG.info("Starting Flare tunnel (this may take a while on first run)...")
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self.tunnel.start)
+            
             self.tunnel_url = self.tunnel.tunnel_url
+            if self.tunnel_url:
+                LOG.info(f"✅ Flare tunnel started successfully at: {self.tunnel_url}")
+            else:
+                LOG.warning("⚠️ Tunnel started but URL is not available")
             self.tunnel_ready.set()
-            LOG.info(f"Flare tunnel started at: {self.tunnel_url}")
         except CloudflaredError as e:
-            LOG.error(f"Failed to start flare tunnel (Cloudflare error): {e}", exc_info=True)
+            LOG.error(f"❌ Failed to start flare tunnel (Cloudflare error): {e}", exc_info=True)
             self.tunnel_url = None
             self.tunnel_ready.set()  # 即使失败也设置标志
         except Exception as e:
-            LOG.error(f"Failed to start flare tunnel (unexpected error): {e}", exc_info=True)
+            LOG.error(f"❌ Failed to start flare tunnel (unexpected error): {e}", exc_info=True)
             self.tunnel_url = None
             self.tunnel_ready.set()  # 即使失败也设置标志
         
