@@ -30,6 +30,40 @@ class CommandHandler:
             return False
         return True
 
+    async def check_channel_permission(
+        self, user_id: str, group_id: str, sender_role: str | None
+    ) -> bool:
+        """
+        检查用户是否有权对当前频道内的游戏执行写操作。
+        
+        权限层级（从高到低）：
+        1. Root 用户：拥有所有权限
+        2. 群管理员/群主：可以管理本群的游戏
+        3. 游戏主持人：可以管理自己主持的游戏
+        
+        Args:
+            user_id: 用户ID
+            group_id: 群组ID
+            sender_role: 发送者在群组中的角色 (admin/owner/member)
+            
+        Returns:
+            bool: 如果用户有权限返回 True，否则返回 False
+        """
+        # Root用户
+        if self.rbac_manager.user_has_role(user_id, "root"):
+            return True
+
+        # 群管理员
+        if sender_role in ["admin", "owner"]:
+            return True
+
+        # 游戏主持人 (当前频道游戏的)
+        game = await self.db.get_game_by_channel_id(group_id)
+        if game and str(game["host_user_id"]) == user_id:
+            return True
+
+        return False
+
     def __init__(
         self,
         plugin: NcatBotPlugin,
@@ -55,24 +89,6 @@ class CommandHandler:
             await event.reply("当前频道没有正在进行的游戏。", at=False)
         return game
 
-    async def _is_authorized_for_channel_action(
-        self, user_id: str, group_id: str, sender_role: str | None
-    ) -> bool:
-        """检查用户是否有权对当前频道内的游戏执行写操作"""
-        # Root用户
-        if self.rbac_manager.user_has_role(user_id, "root"):
-            return True
-
-        # 群管理员
-        if sender_role in ["admin", "owner"]:
-            return True
-
-        # 游戏主持人 (当前频道游戏的)
-        game = await self.db.get_game_by_channel_id(group_id)
-        if game and str(game["host_user_id"]) == user_id:
-            return True
-
-        return False
 
     async def handle_help(self, event: GroupMessageEvent):
         """处理 /aigm help 命令"""
@@ -329,7 +345,7 @@ class CommandHandler:
         """处理 /aigm branch create 命令"""
         user_id = str(event.user_id)
         group_id = str(event.group_id)
-        if not await self._is_authorized_for_channel_action(
+        if not await self.check_channel_permission(
             user_id, group_id, event.sender.role
         ):
             await event.reply("权限不足。", at=False)
@@ -358,7 +374,7 @@ class CommandHandler:
         """处理 /aigm branch rename 命令"""
         user_id = str(event.user_id)
         group_id = str(event.group_id)
-        if not await self._is_authorized_for_channel_action(
+        if not await self.check_channel_permission(
             user_id, group_id, event.sender.role
         ):
             await event.reply("权限不足。", at=False)
@@ -394,7 +410,7 @@ class CommandHandler:
         """处理 /aigm branch delete 命令"""
         user_id = str(event.user_id)
         group_id = str(event.group_id)
-        if not await self._is_authorized_for_channel_action(
+        if not await self.check_channel_permission(
             user_id, group_id, event.sender.role
         ):
             await event.reply("权限不足。", at=False)
@@ -531,7 +547,7 @@ class CommandHandler:
         """处理 /aigm game detach 命令"""
         user_id = str(event.user_id)
         group_id = str(event.group_id)
-        if not await self._is_authorized_for_channel_action(user_id, group_id, event.sender.role):
+        if not await self.check_channel_permission(user_id, group_id, event.sender.role):
             await event.reply("权限不足，您必须是群管理员、root用户或该频道游戏的主持人。", at=False)
             return
 
@@ -549,7 +565,7 @@ class CommandHandler:
         """处理 /aigm checkout head 命令"""
         user_id = str(event.user_id)
         group_id = str(event.group_id)
-        if not await self._is_authorized_for_channel_action(user_id, group_id, event.sender.role):
+        if not await self.check_channel_permission(user_id, group_id, event.sender.role):
             await event.reply("权限不足，您必须是群管理员、root用户或该频道游戏的主持人。", at=False)
             return
 
@@ -565,7 +581,7 @@ class CommandHandler:
         """处理 /aigm checkout <branch> 命令"""
         user_id = str(event.user_id)
         group_id = str(event.group_id)
-        if not await self._is_authorized_for_channel_action(
+        if not await self.check_channel_permission(
             user_id, group_id, event.sender.role
         ):
             await event.reply("权限不足。", at=False)
@@ -582,7 +598,7 @@ class CommandHandler:
         """处理 /aigm reset <round_id> 命令"""
         user_id = str(event.user_id)
         group_id = str(event.group_id)
-        if not await self._is_authorized_for_channel_action(
+        if not await self.check_channel_permission(
             user_id, group_id, event.sender.role
         ):
             await event.reply("权限不足。", at=False)
@@ -601,7 +617,7 @@ class CommandHandler:
         """处理 /aigm tag create 命令"""
         user_id = str(event.user_id)
         group_id = str(event.group_id)
-        if not await self._is_authorized_for_channel_action(
+        if not await self.check_channel_permission(
             user_id, group_id, event.sender.role
         ):
             await event.reply("权限不足。", at=False)
@@ -685,7 +701,7 @@ class CommandHandler:
         """处理 /aigm tag delete 命令"""
         user_id = str(event.user_id)
         group_id = str(event.group_id)
-        if not await self._is_authorized_for_channel_action(
+        if not await self.check_channel_permission(
             user_id, group_id, event.sender.role
         ):
             await event.reply("权限不足。", at=False)

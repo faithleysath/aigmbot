@@ -250,7 +250,19 @@ class EventHandler:
             )
 
     async def _is_group_admin_or_host(self, group_id: str, user_id: str) -> bool:
-        """检查用户是否为群管理员或游戏主持人"""
+        """
+        检查用户是否为群管理员或游戏主持人。
+        
+        已弃用：建议使用 CommandHandler.check_channel_permission() 方法。
+        此方法保留用于事件处理器的兼容性。
+        
+        Args:
+            group_id: 群组ID
+            user_id: 用户ID
+            
+        Returns:
+            bool: 如果用户有权限返回 True，否则返回 False
+        """
         # Root 用户拥有完整控制权
         if self.plugin.rbac_manager.user_has_role(user_id, "root"):
             return True

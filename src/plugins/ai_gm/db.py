@@ -161,13 +161,26 @@ class Database:
 
     @asynccontextmanager
     async def transaction(self):
-        """Provides a transaction context manager with savepoint support for nesting."""
+        """
+        提供支持嵌套的事务上下文管理器。
+        
+        嵌套事务通过 SAVEPOINT 实现。顶层事务使用 BEGIN IMMEDIATE。
+        
+        Yields:
+            None
+            
+        Raises:
+            RuntimeError: 如果数据库未连接
+            Exception: 事务执行过程中的任何异常都会导致回滚
+        """
         if not self.conn:
             raise RuntimeError("数据库未连接")
 
         if getattr(self.conn, "in_transaction", False):
             # Nested transaction: use savepoints
-            savepoint_name = f"sp_{next(self._savepoint_counter)}"
+            # 使用计数器生成安全的标识符
+            savepoint_id = next(self._savepoint_counter)
+            savepoint_name = f"sp_{savepoint_id}"
             try:
                 await self.conn.execute(f"SAVEPOINT {savepoint_name};")
                 yield
@@ -187,34 +200,64 @@ class Database:
                 raise
 
     async def is_game_running(self, channel_id: str) -> bool:
-        """检查指定频道当前是否有正在进行的游戏"""
+        """
+        检查指定频道当前是否有正在进行的游戏。
+        
+        Args:
+            channel_id: 频道ID
+            
+        Returns:
+            bool: 如果频道有正在进行的游戏返回 True，否则返回 False
+            
+        Raises:
+            RuntimeError: 如果数据库未连接
+        """
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(
-                "SELECT 1 FROM games WHERE channel_id = ?", (channel_id,)
-            )
+        async with self.conn.execute(
+            "SELECT 1 FROM games WHERE channel_id = ?", (channel_id,)
+        ) as cursor:
             result = await cursor.fetchone()
             return result is not None
 
     async def get_game_by_channel_id(self, channel_id: str):
-        """通过 channel_id 获取游戏信息"""
+        """
+        通过 channel_id 获取游戏信息。
+        
+        Args:
+            channel_id: 频道ID
+            
+        Returns:
+            aiosqlite.Row | None: 游戏记录，如果不存在则返回 None
+            
+        Raises:
+            RuntimeError: 如果数据库未连接
+        """
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(
-                "SELECT * FROM games WHERE channel_id = ?", (channel_id,)
-            )
+        async with self.conn.execute(
+            "SELECT * FROM games WHERE channel_id = ?", (channel_id,)
+        ) as cursor:
             return await cursor.fetchone()
 
     async def get_game_by_game_id(self, game_id: int):
-        """通过 game_id 获取游戏信息"""
+        """
+        通过 game_id 获取游戏信息。
+        
+        Args:
+            game_id: 游戏ID
+            
+        Returns:
+            aiosqlite.Row | None: 游戏记录，如果不存在则返回 None
+            
+        Raises:
+            RuntimeError: 如果数据库未连接
+        """
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(
-                "SELECT * FROM games WHERE game_id = ?", (game_id,)
-            )
+        async with self.conn.execute(
+            "SELECT * FROM games WHERE game_id = ?", (game_id,)
+        ) as cursor:
             return await cursor.fetchone()
 
     async def set_game_frozen_status(self, game_id: int, is_frozen: bool):
@@ -242,13 +285,23 @@ class Database:
                 )
 
     async def get_host_user_id(self, channel_id: str) -> str | None:
-        """获取游戏主持人ID"""
+        """
+        获取游戏主持人ID。
+        
+        Args:
+            channel_id: 频道ID
+            
+        Returns:
+            str | None: 主持人用户ID，如果游戏不存在则返回 None
+            
+        Raises:
+            RuntimeError: 如果数据库未连接
+        """
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(
-                "SELECT host_user_id FROM games WHERE channel_id = ?", (channel_id,)
-            )
+        async with self.conn.execute(
+            "SELECT host_user_id FROM games WHERE channel_id = ?", (channel_id,)
+        ) as cursor:
             result = await cursor.fetchone()
             return result["host_user_id"] if result else None
 
@@ -325,28 +378,50 @@ class Database:
                 )
 
     async def get_game_and_head_branch_info(self, game_id: int):
-        """获取游戏和 head 分支信息"""
+        """
+        获取游戏和 head 分支信息。
+        
+        Args:
+            game_id: 游戏ID
+            
+        Returns:
+            aiosqlite.Row: 包含 channel_id 和 tip_round_id 的记录
+            
+        Raises:
+            RuntimeError: 如果数据库未连接或游戏 head 分支未设置
+        """
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(
-                """SELECT g.channel_id, b.tip_round_id
-                   FROM games g
-                   LEFT JOIN branches b ON g.head_branch_id = b.branch_id
-                   WHERE g.game_id = ?""",
-                (game_id,),
-            )
+        async with self.conn.execute(
+            """SELECT g.channel_id, b.tip_round_id
+               FROM games g
+               LEFT JOIN branches b ON g.head_branch_id = b.branch_id
+               WHERE g.game_id = ?""",
+            (game_id,),
+        ) as cursor:
             row = await cursor.fetchone()
             if not row or row["tip_round_id"] is None:
                 raise RuntimeError("游戏 head 分支未设置或已损坏")
             return row
 
     async def get_round_info(self, round_id: int):
-        """获取回合信息"""
+        """
+        获取回合信息。
+        
+        Args:
+            round_id: 回合ID
+            
+        Returns:
+            aiosqlite.Row | None: 回合记录，如果不存在则返回 None
+            
+        Raises:
+            RuntimeError: 如果数据库未连接
+        """
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute("SELECT * FROM rounds WHERE round_id = ?", (round_id,))
+        async with self.conn.execute(
+            "SELECT * FROM rounds WHERE round_id = ?", (round_id,)
+        ) as cursor:
             return await cursor.fetchone()
 
     async def update_game_main_message(self, game_id: int, main_message_id: str):
@@ -399,49 +474,103 @@ class Database:
                 await cursor.execute("DELETE FROM games WHERE game_id = ?", (game_id,))
 
     async def get_all_games(self):
-        """获取所有游戏的信息"""
+        """
+        获取所有游戏的信息。
+        
+        Returns:
+            list[aiosqlite.Row]: 所有游戏记录的列表
+            
+        Raises:
+            RuntimeError: 如果数据库未连接
+        """
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute("SELECT game_id, channel_id, host_user_id, created_at, updated_at FROM games")
+        async with self.conn.execute(
+            "SELECT game_id, channel_id, host_user_id, created_at, updated_at FROM games"
+        ) as cursor:
             return await cursor.fetchall()
 
     async def get_all_branches_for_game(self, game_id: int):
-        """获取指定游戏的所有分支信息"""
+        """
+        获取指定游戏的所有分支信息。
+        
+        Args:
+            game_id: 游戏ID
+            
+        Returns:
+            list[aiosqlite.Row]: 该游戏的所有分支记录
+            
+        Raises:
+            RuntimeError: 如果数据库未连接
+        """
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute("SELECT * FROM branches WHERE game_id = ?", (game_id,))
+        async with self.conn.execute(
+            "SELECT * FROM branches WHERE game_id = ?", (game_id,)
+        ) as cursor:
             return await cursor.fetchall()
 
     async def get_branch_by_name(self, game_id: int, branch_name: str):
-        """通过名称获取指定游戏的分支信息"""
+        """
+        通过名称获取指定游戏的分支信息。
+        
+        Args:
+            game_id: 游戏ID
+            branch_name: 分支名称
+            
+        Returns:
+            aiosqlite.Row | None: 分支记录，如果不存在则返回 None
+            
+        Raises:
+            RuntimeError: 如果数据库未连接
+        """
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(
-                "SELECT * FROM branches WHERE game_id = ? AND name = ?",
-                (game_id, branch_name),
-            )
+        async with self.conn.execute(
+            "SELECT * FROM branches WHERE game_id = ? AND name = ?",
+            (game_id, branch_name),
+        ) as cursor:
             return await cursor.fetchone()
 
     async def get_branch_by_id(self, branch_id: int):
-        """通过 branch_id 获取分支信息"""
+        """
+        通过 branch_id 获取分支信息。
+        
+        Args:
+            branch_id: 分支ID
+            
+        Returns:
+            aiosqlite.Row | None: 分支记录，如果不存在则返回 None
+            
+        Raises:
+            RuntimeError: 如果数据库未连接
+        """
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(
-                "SELECT * FROM branches WHERE branch_id = ?",
-                (branch_id,),
-            )
+        async with self.conn.execute(
+            "SELECT * FROM branches WHERE branch_id = ?",
+            (branch_id,),
+        ) as cursor:
             return await cursor.fetchone()
 
     async def get_all_rounds_for_game(self, game_id: int):
-        """获取指定游戏的所有回合信息"""
+        """
+        获取指定游戏的所有回合信息。
+        
+        Args:
+            game_id: 游戏ID
+            
+        Returns:
+            list[aiosqlite.Row]: 该游戏的所有回合记录（仅包含 round_id 和 parent_id）
+            
+        Raises:
+            RuntimeError: 如果数据库未连接
+        """
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute("SELECT round_id, parent_id FROM rounds WHERE game_id = ?", (game_id,))
+        async with self.conn.execute(
+            "SELECT round_id, parent_id FROM rounds WHERE game_id = ?", (game_id,)
+        ) as cursor:
             return await cursor.fetchall()
 
     async def create_tag(self, game_id: int, name: str, round_id: int) -> int:
@@ -459,22 +588,45 @@ class Database:
                 return cursor.lastrowid
 
     async def get_tag_by_name(self, game_id: int, name: str):
-        """通过名称获取标签信息"""
+        """
+        通过名称获取标签信息。
+        
+        Args:
+            game_id: 游戏ID
+            name: 标签名称
+            
+        Returns:
+            aiosqlite.Row | None: 标签记录，如果不存在则返回 None
+            
+        Raises:
+            RuntimeError: 如果数据库未连接
+        """
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(
-                "SELECT * FROM tags WHERE game_id = ? AND name = ?",
-                (game_id, name),
-            )
+        async with self.conn.execute(
+            "SELECT * FROM tags WHERE game_id = ? AND name = ?",
+            (game_id, name),
+        ) as cursor:
             return await cursor.fetchone()
 
     async def get_all_tags_for_game(self, game_id: int):
-        """获取指定游戏的所有标签信息"""
+        """
+        获取指定游戏的所有标签信息。
+        
+        Args:
+            game_id: 游戏ID
+            
+        Returns:
+            list[aiosqlite.Row]: 该游戏的所有标签记录
+            
+        Raises:
+            RuntimeError: 如果数据库未连接
+        """
         if not self.conn:
             raise RuntimeError("数据库未连接")
-        async with self.conn.cursor() as cursor:
-            await cursor.execute("SELECT * FROM tags WHERE game_id = ?", (game_id,))
+        async with self.conn.execute(
+            "SELECT * FROM tags WHERE game_id = ?", (game_id,)
+        ) as cursor:
             return await cursor.fetchall()
 
     async def delete_tag(self, game_id: int, name: str):
@@ -525,21 +677,41 @@ class Database:
                 )
 
     async def get_round_ancestors(self, round_id: int, limit: int = 10) -> list[aiosqlite.Row]:
-        """获取一个回合及其祖先，按时间倒序排列"""
+        """
+        获取一个回合及其祖先，按时间正序排列（从最早的祖先到当前回合）。
+        
+        使用递归 CTE 一次性查询所有祖先，性能优于逐个查询。
+        
+        Args:
+            round_id: 起始回合ID
+            limit: 最多返回的祖先数量（包括起始回合）
+            
+        Returns:
+            list[aiosqlite.Row]: 祖先回合列表，按时间正序排列
+            
+        Raises:
+            RuntimeError: 如果数据库未连接
+        """
         if not self.conn:
             raise RuntimeError("数据库未连接")
         
-        ancestors = []
-        current_id = round_id
-        for _ in range(limit):
-            if current_id == -1:
-                break
-            async with self.conn.cursor() as cursor:
-                await cursor.execute("SELECT * FROM rounds WHERE round_id = ?", (current_id,))
-                round_data = await cursor.fetchone()
-                if not round_data:
-                    break
-                ancestors.append(round_data)
-                current_id = round_data["parent_id"]
-                
-        return list(reversed(ancestors))
+        # 使用递归 CTE 一次性获取所有祖先
+        query = """
+        WITH RECURSIVE ancestors AS (
+            SELECT *, 0 as depth 
+            FROM rounds 
+            WHERE round_id = ?
+            
+            UNION ALL
+            
+            SELECT r.*, a.depth + 1 
+            FROM rounds r 
+            JOIN ancestors a ON r.round_id = a.parent_id
+            WHERE a.parent_id != -1 AND a.depth < ?
+        )
+        SELECT * FROM ancestors ORDER BY depth DESC;
+        """
+        
+        async with self.conn.execute(query, (round_id, limit - 1)) as cursor:
+            rows = await cursor.fetchall()
+            return list(rows)

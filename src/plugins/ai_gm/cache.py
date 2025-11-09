@@ -97,8 +97,19 @@ class CacheManager:
     async def get_vote_item(
         self, group_id: str, message_id: str
     ) -> VoteCacheItem | None:
+        """
+        获取指定消息的投票缓存项（深拷贝）。
+        
+        Args:
+            group_id: 群组ID
+            message_id: 消息ID
+            
+        Returns:
+            VoteCacheItem | None: 投票缓存项的深拷贝，如果不存在则返回 None
+        """
         async with self._cache_lock:
-            return self.vote_cache.get(group_id, {}).get(message_id)
+            item = self.vote_cache.get(group_id, {}).get(message_id)
+            return deepcopy(item) if item else None
 
     async def get_group_vote_cache(self, group_id: str) -> dict[str, VoteCacheItem]:
         async with self._cache_lock:

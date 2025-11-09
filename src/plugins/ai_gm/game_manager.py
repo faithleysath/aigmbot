@@ -80,7 +80,7 @@ class GameManager:
 
             await self.db.update_game_head_branch(game_id, branch_id)
 
-            LOG.debug(f"游戏 {game_id} 的初始 round 和 branch 已创建")
+            LOG.info(f"游戏 {game_id} 的初始 round 和 branch 已创建")
 
             # 4. 检出 head，向玩家展示
             if game_id is not None:
@@ -177,7 +177,7 @@ class GameManager:
                 except Exception as e:
                     LOG.warning(f"为消息 {main_message_id} 贴表情 {emoji_id} 失败: {e}")
 
-            LOG.debug(f"游戏 {game_id} 已成功检出 head，主消息 ID: {main_message_id}")
+            LOG.info(f"游戏 {game_id} 已成功检出 head，主消息 ID: {main_message_id}")
 
         except Exception as e:
             LOG.error(f"检出 head (game_id: {game_id}) 时出错: {e}", exc_info=True)
@@ -214,50 +214,51 @@ class GameManager:
     async def tally_and_advance(self, game_id: int, scores: dict, result_lines: list[str]):
         """
         根据投票结果计票，并推进游戏到下一回合。
-
+        
+        使用乐观锁机制防止并发冲突：在事务内验证 tip_round_id 未被修改。
+        
         Args:
-            game_id: 游戏ID。
-            scores: 包含各选项得分的字典。
-            result_lines: 用于向用户展示的投票结果文本行。
+            game_id: 游戏ID
+            scores: 包含各选项得分的字典
+            result_lines: 用于向用户展示的投票结果文本行
         """
         if not self.db or not self.db.conn or not self.llm_api:
             return
 
         channel_id = None
         main_message_id = None
+        
         try:
-            async with self.db.conn.cursor() as cursor:
-                await cursor.execute(
-                    "SELECT * FROM games WHERE game_id = ?", (game_id,)
-                )
-
-                game_data = await cursor.fetchone()
-            if not game_data:
-                return
-
-            channel_id = str(game_data["channel_id"])
-            main_message_id = str(game_data["main_message_id"] or "")
-            system_prompt = game_data["system_prompt"]
-            head_branch_id = game_data["head_branch_id"]
-
-            if not scores:
-                await self.api.post_group_msg(channel_id, text="无人投票，请继续投票后再确认。", reply=main_message_id)
-                return
-
+            # 1. 先冻结游戏，防止其他操作
             await self.db.set_game_frozen_status(game_id, True)
             
-            # Get tip_round_id
-            async with self.db.conn.cursor() as cursor:
-                await cursor.execute(
-                    "SELECT tip_round_id FROM branches WHERE branch_id = ?",
-                    (head_branch_id,),
-                )
-                tip_now_data = await cursor.fetchone()
-                if not tip_now_data:
+            # 2. 在单个事务内获取所有必要数据（读锁）
+            async with self.db.transaction():
+                game_data = await self.db.get_game_by_game_id(game_id)
+                if not game_data:
                     return
-                initial_tip_round_id = tip_now_data[0]
+                
+                channel_id = str(game_data["channel_id"])
+                main_message_id = str(game_data["main_message_id"] or "")
+                system_prompt = game_data["system_prompt"]
+                head_branch_id = game_data["head_branch_id"]
+                
+                # 获取当前分支的 tip_round_id
+                branch = await self.db.get_branch_by_id(head_branch_id)
+                if not branch:
+                    return
+                initial_tip_round_id = branch["tip_round_id"]
 
-            # 2. 找出胜利者
+            # 3. 检查投票结果
+            if not scores:
+                await self.api.post_group_msg(
+                    channel_id, 
+                    text="无人投票，请继续投票后再确认。", 
+                    reply=main_message_id
+                )
+                return
+
+            # 4. 找出胜利者
             max_score = max(scores.values())
             winners = [k for k, v in scores.items() if v == max_score]
             winner_lines = []
@@ -275,22 +276,16 @@ class GameManager:
                 reply=main_message_id,
             )
 
-            # 3. 构建历史
-            messages = await self._build_llm_history(
-                system_prompt, initial_tip_round_id
-            )
+            # 5. 构建历史
+            messages = await self._build_llm_history(system_prompt, initial_tip_round_id)
             if not messages:
-                await self.api.post_group_msg(
-                    channel_id, text="构建对话历史失败，游戏中断。"
-                )
+                await self.api.post_group_msg(channel_id, text="构建对话历史失败，游戏中断。")
                 return
             messages.append({"role": "user", "content": winner_content})
 
-            await self.api.post_group_msg(
-                channel_id, text="🛠 GM 正在思考下一步剧情..."
-            )
+            await self.api.post_group_msg(channel_id, text="🛠 GM 正在思考下一步剧情...")
 
-            # 4. 调用LLM
+            # 6. 调用LLM（可能耗时）
             new_assistant_response, usage, model_name = await self.llm_api.get_completion(
                 cast(list[ChatCompletionMessageParam], messages)
             )
@@ -298,21 +293,15 @@ class GameManager:
                 await self.api.post_group_msg(channel_id, text="GM没有回应，游戏中断。")
                 return
 
-            # 5. 数据库操作
+            # 7. 在事务内完成所有更新，使用乐观锁检查
             async with self.db.transaction():
-                async with self.db.conn.cursor() as cursor:
-                    await cursor.execute(
-                        "SELECT tip_round_id FROM branches WHERE branch_id = ?",
-                        (head_branch_id,),
-                    )
-                    latest_tip_data = await cursor.fetchone()
-                    if (
-                        not latest_tip_data
-                        or latest_tip_data[0] != initial_tip_round_id
-                    ):
-                        raise TipChangedError()
+                # 再次获取分支状态，检查是否被并发修改
+                current_branch = await self.db.get_branch_by_id(head_branch_id)
+                if not current_branch or current_branch["tip_round_id"] != initial_tip_round_id:
+                    raise TipChangedError()
 
-                    # 创建新回合
+                # 创建新回合
+                async with self.db.conn.cursor() as cursor:
                     await cursor.execute(
                         "INSERT INTO rounds (game_id, parent_id, player_choice, assistant_response, llm_usage, model_name) VALUES (?, ?, ?, ?, ?, ?)",
                         (
@@ -325,14 +314,13 @@ class GameManager:
                         ),
                     )
                     new_round_id = cursor.lastrowid
+                    if new_round_id is None:
+                        raise RuntimeError("创建新回合失败")
 
-                    # 更新 tip
-                    await cursor.execute(
-                        "UPDATE branches SET tip_round_id = ? WHERE branch_id = ?",
-                        (new_round_id, head_branch_id),
-                    )
+                # 更新分支 tip
+                await self.db.update_branch_tip(head_branch_id, new_round_id)
 
-            # 6. 清理并进入下一轮
+            # 8. 清理并进入下一轮
             await self.cache_manager.clear_group_vote_cache(channel_id)
             await self.checkout_head(game_id)
 
@@ -345,6 +333,8 @@ class GameManager:
                 )
         except Exception as e:
             LOG.error(f"推进失败: {e}", exc_info=True)
+            if channel_id:
+                await self.api.post_group_msg(channel_id, text="推进失败，游戏已解冻，请重试。")
         finally:
             if self.db:
                 await self.db.set_game_frozen_status(game_id, False)
@@ -392,7 +382,7 @@ class GameManager:
                 head_branch_id = head_branch_id_tuple[0]
                 await self.db.update_branch_tip(head_branch_id, parent_id)
 
-            LOG.debug(f"游戏 {game_id} 已成功回退到 round {parent_id}")
+            LOG.info(f"游戏 {game_id} 已成功回退到 round {parent_id}")
             await self.api.post_group_msg(
                 str(channel_id), text="🔄 游戏已成功回退到上一轮。"
             )
@@ -441,7 +431,7 @@ class GameManager:
                 raise ValueError(f"目标回合 {target_round_id} 不存在")
 
             await self.db.create_branch(game_id, new_branch_name, target_round_id)
-            LOG.debug(f"游戏 {game_id} 从 round {target_round_id} 创建了新分支 '{new_branch_name}'")
+            LOG.info(f"游戏 {game_id} 从 round {target_round_id} 创建了新分支 '{new_branch_name}'")
             if channel_id:
                 await self.api.post_group_msg(
                     str(channel_id),
@@ -477,7 +467,7 @@ class GameManager:
                 raise ValueError(f"找不到名为 '{branch_name}' 的分支")
 
             await self.db.update_game_head_branch(game_id, branch["branch_id"])
-            LOG.debug(f"游戏 {game_id} 的 HEAD 已切换到分支 '{branch_name}'")
+            LOG.info(f"游戏 {game_id} 的 HEAD 已切换到分支 '{branch_name}'")
 
             if channel_id:
                 await self.api.post_group_msg(
@@ -515,7 +505,7 @@ class GameManager:
                 raise ValueError(f"目标回合 {round_id} 不存在")
 
             await self.db.update_branch_tip(head_branch_id, round_id)
-            LOG.debug(f"游戏 {game_id} 的 HEAD 分支已重置到 round {round_id}")
+            LOG.info(f"游戏 {game_id} 的 HEAD 分支已重置到 round {round_id}")
 
             if channel_id:
                 await self.api.post_group_msg(
