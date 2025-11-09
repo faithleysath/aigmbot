@@ -135,12 +135,11 @@ class AIGMPlugin(NcatBotPlugin):
     async def on_close(self):
         """插件关闭时执行的操作"""
         if self.cache_manager:
-            await self.cache_manager.save_to_disk()
+            await self.cache_manager.shutdown()
         if self.db:
             await self.db.close()
         if self.renderer:
-            # await self.renderer.close()
-            pass # 因为 MarkdownRenderer 目前没有异步关闭操作，会报错
+            await self.renderer.close()
         LOG.info(f"[{self.name}] 已卸载。")
 
     @filter_registry.group_filter

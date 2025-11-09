@@ -8,6 +8,7 @@ import asyncio
 from copy import deepcopy
 
 from ncatbot.utils import get_log
+from .constants import CACHE_SAVE_DELAY_SECONDS
 
 LOG = get_log(__name__)
 
@@ -24,8 +25,9 @@ class CacheManager:
         self.vote_cache: dict[str, dict[str, VoteCacheItem]] = {}
         self._io_lock = asyncio.Lock()
         self._cache_lock = asyncio.Lock()  # 保护内存缓存并发
-        self._last_save_ts = 0.0
         self._loaded = False  # 防止运行期被重复加载导致状态回退
+        self._pending_save_task: asyncio.Task | None = None  # 待执行的保存任务
+        self._save_requested = False  # 标记是否有保存请求
 
     # --- Pending Games ---
     async def add_pending_game(self, message_id: str, game_data: dict):
@@ -177,13 +179,24 @@ class CacheManager:
         LOG.info("成功从磁盘加载缓存。")
         self._loaded = True
 
-    async def save_to_disk(self, force: bool = False):
-        """将当前缓存保存到磁盘"""
+    async def _delayed_save_worker(self):
+        """
+        延迟保存工作协程。
+        
+        等待指定时间后执行实际保存，期间的所有保存请求会被合并。
+        """
+        await asyncio.sleep(CACHE_SAVE_DELAY_SECONDS)
+        await self._do_save_to_disk()
+
+    async def _do_save_to_disk(self):
+        """执行实际的磁盘保存操作"""
         if not self.cache_path:
             return
 
-        # 先在 _cache_lock 下做“稳定快照/序列化材料”，避免读到半更新状态
+        # 先在 _cache_lock 下做"稳定快照/序列化材料"，避免读到半更新状态
         async with self._cache_lock:
+            self._save_requested = False  # 重置保存请求标记
+            
             # 构造可序列化的 pending_new_games
             serializable_pending = {}
             for key, game in self.pending_new_games.items():
@@ -209,14 +222,66 @@ class CacheManager:
                 "vote_cache": serializable_votes,
             }
 
-        # 再拿 _io_lock 做节流与写盘（注意锁顺序统一：先 _cache_lock 再 _io_lock）
+        # 再拿 _io_lock 做写盘（注意锁顺序统一：先 _cache_lock 再 _io_lock）
         async with self._io_lock:
-            now = asyncio.get_running_loop().time()
-            if not force and (now - self._last_save_ts) < 0.3:
-                return
             try:
                 async with aiofiles.open(self.cache_path, "w", encoding="utf-8") as f:
                     await f.write(json.dumps(data, indent=4, ensure_ascii=False))
-                self._last_save_ts = now
+                LOG.debug("缓存已成功保存到磁盘")
             except Exception as e:
                 LOG.error(f"保存缓存到磁盘失败: {e}", exc_info=True)
+
+    async def save_to_disk(self, force: bool = False):
+        """
+        请求保存缓存到磁盘。
+        
+        使用延迟+合并策略：
+        - 非强制模式：设置一个延迟定时器，期间的所有保存请求会被合并
+        - 强制模式：立即执行保存，取消待执行的延迟任务
+        
+        Args:
+            force: 是否强制立即保存
+        """
+        if not self.cache_path:
+            return
+
+        if force:
+            # 强制保存：取消待执行的任务并立即保存
+            if self._pending_save_task and not self._pending_save_task.done():
+                self._pending_save_task.cancel()
+                try:
+                    await self._pending_save_task
+                except asyncio.CancelledError:
+                    pass
+            self._pending_save_task = None
+            await self._do_save_to_disk()
+        else:
+            # 延迟保存：如果没有待执行的任务，创建一个
+            if not self._pending_save_task or self._pending_save_task.done():
+                self._save_requested = True
+                self._pending_save_task = asyncio.create_task(self._delayed_save_worker())
+            # 如果已有待执行的任务，本次请求会自动合并（无需操作）
+
+    async def shutdown(self):
+        """
+        关闭缓存管理器，确保所有待保存的数据都被写入磁盘。
+        
+        应在程序退出前调用此方法，以防止数据丢失。
+        """
+        # 如果有待执行的保存任务，等待其完成
+        if self._pending_save_task and not self._pending_save_task.done():
+            LOG.info("等待待执行的缓存保存任务完成...")
+            try:
+                await self._pending_save_task
+                LOG.info("待执行的缓存保存任务已完成")
+            except asyncio.CancelledError:
+                # 如果任务被取消，强制保存一次
+                LOG.warning("缓存保存任务被取消，执行最终强制保存")
+                await self._do_save_to_disk()
+            except Exception as e:
+                LOG.error(f"等待缓存保存任务时出错: {e}，执行最终强制保存")
+                await self._do_save_to_disk()
+        elif self._save_requested:
+            # 如果有保存请求但任务已完成或不存在，执行最终保存
+            LOG.info("执行最终缓存保存")
+            await self._do_save_to_disk()

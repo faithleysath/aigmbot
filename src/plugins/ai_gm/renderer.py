@@ -4,14 +4,29 @@ from ncatbot.utils import get_log
 import asyncio
 import re
 
-LOG = get_log(__name__)
+from .constants import (
+    MAX_CONCURRENT_RENDERS,
+    RENDER_WIDTH,
+    RENDER_PADDING,
+    RENDER_TOP_PADDING,
+    BASE_FONT_SIZE,
+    HEADER_FONT_SIZE,
+    READING_SPEED_WPM,
+)
 
-# 限制并发渲染数量，避免创建过多页面
-MAX_CONCURRENT_RENDERS = 3
+LOG = get_log(__name__)
 
 
 def _calculate_reading_time(text: str) -> str:
-    """计算文本的字数和预计阅读时间"""
+    """
+    计算文本的字数和预计阅读时间。
+    
+    Args:
+        text: 要计算的文本内容
+        
+    Returns:
+        str: 包含字数和预计阅读时间的格式化字符串
+    """
     # 移除非文本内容，如 Markdown 格式
     text = re.sub(r"[`*#->]", "", text)
     # 统计中文字符
@@ -19,8 +34,8 @@ def _calculate_reading_time(text: str) -> str:
     # 统计英文单词
     english_words = len(re.findall(r"[a-zA-Z0-9]+", text))
     total_words = chinese_chars + english_words
-    # 按 350 字/分钟估算阅读时间
-    reading_minutes = round(total_words / 350)
+    # 按配置的阅读速度估算阅读时间
+    reading_minutes = round(total_words / READING_SPEED_WPM)
     reading_time_str = f"字数：{total_words}，预计阅读时间：约 {reading_minutes} 分钟"
     return reading_time_str
 
@@ -74,13 +89,31 @@ class MarkdownRenderer:
                 return None
 
     async def close(self):
-        try:
-            if self._browser:
+        """
+        关闭渲染器并清理资源。
+        
+        此方法会安全地关闭浏览器和 Playwright 实例，
+        即使某个步骤失败也会继续尝试关闭其他资源。
+        """
+        # 先关闭浏览器
+        if self._browser:
+            try:
                 await self._browser.close()
-            if self._p:
+                LOG.debug("浏览器已关闭")
+            except Exception as e:
+                LOG.warning(f"关闭浏览器失败: {e}")
+            finally:
+                self._browser = None
+        
+        # 再停止 Playwright
+        if self._p:
+            try:
                 await self._p.stop()
-        except Exception as e:
-            LOG.warning(f"关闭渲染器失败: {e}")
+                LOG.debug("Playwright 已停止")
+            except Exception as e:
+                LOG.warning(f"停止 Playwright 失败: {e}")
+            finally:
+                self._p = None
 
     async def render_markdown(
         self, markdown_text: str, extra_text: str | None = None
@@ -111,7 +144,7 @@ class MarkdownRenderer:
                         body {{
                             position: relative; /* 为绝对定位的子元素提供容器 */
                             /* 最终渲染宽度 */
-                            width: 1200px;
+                            width: {RENDER_WIDTH}px;
                             box-sizing: border-box; /* 确保 padding 不会撑大宽度 */
 
                             /* 暗色主题 */
@@ -119,14 +152,14 @@ class MarkdownRenderer:
                             color: #ffffff;
 
                             /* 舒适的内边距 */
-                            padding: 50px;
-                            padding-top: 100px; /* 为阅读时间提示留出空间 */
+                            padding: {RENDER_PADDING}px;
+                            padding-top: {RENDER_TOP_PADDING}px; /* 为阅读时间提示留出空间 */
 
                             /* 系统默认字体 */
                             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
                             
                             /* 根据21个字/行计算出的字体大小 */
-                            font-size: 47px;
+                            font-size: {BASE_FONT_SIZE}px;
                             line-height: 1.6;
                             letter-spacing: 0.1em; /* 调整文字横向间距 */
                             margin: 0 auto; /* 居中显示 */
@@ -137,11 +170,11 @@ class MarkdownRenderer:
                         .header-info {{
                             position: absolute;
                             top: 60px;
-                            left: 50px;
-                            right: 50px;
+                            left: {RENDER_PADDING}px;
+                            right: {RENDER_PADDING}px;
                             display: flex;
                             justify-content: space-between;
-                            font-size: 30px;
+                            font-size: {HEADER_FONT_SIZE}px;
                             color: #888;
                         }}
                         code {{
@@ -179,7 +212,7 @@ class MarkdownRenderer:
                 page = None
                 try:
                     page = await browser.new_page()
-                    await page.set_viewport_size({"width": 1200, "height": 100})
+                    await page.set_viewport_size({"width": RENDER_WIDTH, "height": 100})
                     await page.set_content(html_with_style, wait_until="networkidle")
                     await page.wait_for_timeout(50)
 

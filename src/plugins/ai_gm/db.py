@@ -4,6 +4,8 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 import itertools
 
+from .constants import DB_BUSY_TIMEOUT_MS, DB_WAL_AUTOCHECKPOINT
+
 LOG = get_log(__name__)
 
 # 用于跟踪当前事务深度的上下文变量
@@ -24,13 +26,39 @@ class Database:
             await self.conn.execute("PRAGMA journal_mode=WAL;")
             await self.conn.execute("PRAGMA synchronous=NORMAL;")
             await self.conn.execute("PRAGMA foreign_keys = ON;")
-            await self.conn.execute("PRAGMA busy_timeout=5000;")  # 5s
-            await self.conn.execute("PRAGMA wal_autocheckpoint=2000;")
+            await self.conn.execute(f"PRAGMA busy_timeout={DB_BUSY_TIMEOUT_MS};")
+            await self.conn.execute(f"PRAGMA wal_autocheckpoint={DB_WAL_AUTOCHECKPOINT};")
             await self.init_db()
             LOG.info(f"成功连接并初始化数据库: {self.db_path}")
         except aiosqlite.Error as e:
             LOG.error(f"数据库连接失败: {e}")
             raise
+
+    async def _ensure_connection(self):
+        """
+        确保数据库连接可用，如果连接断开则尝试重连。
+        
+        此方法会测试连接是否可用，如果不可用则尝试重新连接。
+        应在所有数据库操作前调用此方法。
+        
+        Raises:
+            RuntimeError: 如果数据库未初始化或重连失败
+        """
+        if not self.conn:
+            LOG.warning("数据库连接不存在，尝试建立连接...")
+            await self.connect()
+            return
+        
+        # 测试连接是否可用
+        try:
+            await self.conn.execute("SELECT 1")
+        except Exception as e:
+            LOG.warning(f"数据库连接测试失败: {e}，尝试重连...")
+            try:
+                await self.close()
+            except Exception:
+                pass
+            await self.connect()
 
     async def close(self):
         """关闭数据库连接"""
@@ -222,8 +250,9 @@ class Database:
             bool: 如果频道有正在进行的游戏返回 True，否则返回 False
             
         Raises:
-            RuntimeError: 如果数据库未连接
+            RuntimeError: 如果数据库连接失败
         """
+        await self._ensure_connection()
         if not self.conn:
             raise RuntimeError("数据库未连接")
         async with self.conn.execute(

@@ -9,6 +9,7 @@ from .utils import EMOJI, bytes_to_base64
 from .cache import CacheManager
 from .content_fetcher import ContentFetcher
 from .exceptions import TipChangedError
+from .constants import MAX_HISTORY_ROUNDS
 
 LOG = get_log(__name__)
 
@@ -205,8 +206,7 @@ class GameManager:
             return None
 
         # 使用递归 CTE 一次性获取所有历史回合
-        # limit 设置为 999999，对于实际游戏来说是事实上的无限
-        rounds = await self.db.get_round_ancestors(tip_round_id, limit=999999)
+        rounds = await self.db.get_round_ancestors(tip_round_id, limit=MAX_HISTORY_ROUNDS)
         
         if not rounds:
             return None

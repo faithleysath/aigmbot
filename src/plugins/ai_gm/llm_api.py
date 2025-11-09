@@ -105,14 +105,20 @@ class LLM_API:
                 APIStatusError,
             ) as e:
                 # 判断是否可重试
+                # 429 (Rate Limit) 总是可重试
+                # 408 (Request Timeout) 可重试
+                # 5xx (Server Error) 可重试
+                # 其他情况不重试
+                status_code = getattr(e, "status_code", 0)
                 retriable = (
-                    isinstance(e, RateLimitError)
-                    or isinstance(e, APITimeoutError)
-                    or isinstance(e, APIConnectionError)
-                    or (
-                        isinstance(e, APIStatusError)
-                        and getattr(e, "status_code", 500) >= 500
-                    )
+                    isinstance(e, RateLimitError)  # 429 单独处理
+                    or isinstance(e, APITimeoutError)  # 超时
+                    or isinstance(e, APIConnectionError)  # 连接错误
+                    or (isinstance(e, APIStatusError) and (
+                        status_code >= 500  # 5xx 服务器错误
+                        or status_code == 429  # 速率限制（备用检查）
+                        or status_code == 408  # 请求超时
+                    ))
                 )
                 
                 # 如果可重试且未达到最大重试次数
@@ -122,16 +128,30 @@ class LLM_API:
                         self.base_delay * (2**attempt) + random.uniform(0, 0.5),
                         self.max_delay
                     )
-                    LOG.warning(
-                        f"LLM 调用失败（{e.__class__.__name__}），"
-                        f"第 {attempt + 1}/{self.max_retries - 1} 次重试，"
-                        f"等待 {delay:.2f}s..."
-                    )
+                    
+                    # 根据错误类型提供更详细的日志
+                    error_type = e.__class__.__name__
+                    if isinstance(e, RateLimitError) or status_code == 429:
+                        LOG.warning(
+                            f"LLM API 速率限制（{error_type}），"
+                            f"第 {attempt + 1}/{self.max_retries - 1} 次重试，"
+                            f"等待 {delay:.2f}s..."
+                        )
+                    else:
+                        LOG.warning(
+                            f"LLM 调用失败（{error_type}, status={status_code}），"
+                            f"第 {attempt + 1}/{self.max_retries - 1} 次重试，"
+                            f"等待 {delay:.2f}s..."
+                        )
+                    
                     await asyncio.sleep(delay)
                     continue
                 
                 # 不可重试或已达最大重试次数
-                LOG.error(f"调用 OpenAI API 时出错: {e}")
+                if retriable:
+                    LOG.error(f"调用 OpenAI API 失败，已达最大重试次数: {e}")
+                else:
+                    LOG.error(f"调用 OpenAI API 时出现不可重试的错误 (status={status_code}): {e}")
                 raise
             except Exception as e:
                 # 非 API 错误，不重试，直接抛出

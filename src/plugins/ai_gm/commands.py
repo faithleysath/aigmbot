@@ -14,10 +14,9 @@ from .cache import CacheManager
 from .visualizer import Visualizer
 from .renderer import MarkdownRenderer
 from .utils import bytes_to_base64
+from .constants import HISTORY_MAX_LIMIT
 
 LOG = get_log(__name__)
-
-HISTORY_MAX_LIMIT = 10
 
 
 class CommandHandler:
