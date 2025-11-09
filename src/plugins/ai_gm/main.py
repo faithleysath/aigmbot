@@ -130,7 +130,7 @@ class AIGMPlugin(NcatBotPlugin):
                 self.web_ui.tunnel_ready.set()
             
             # 启动 Web UI 服务器
-            self.web_ui_task = asyncio.get_event_loop().create_task(self.web_ui.run_in_background())
+            self.web_ui_task = asyncio.create_task(self.web_ui.run_in_background())
 
             self.visualizer = Visualizer(self.db)
             content_fetcher = ContentFetcher(self, self.cache_manager)
@@ -167,13 +167,21 @@ class AIGMPlugin(NcatBotPlugin):
 
     async def on_close(self):
         """插件关闭时执行的操作"""
-        # 1. 取消 Web UI 任务
+        # 1. 取消 Web UI 任务（检查事件循环状态）
         if self.web_ui_task and not self.web_ui_task.done():
-            self.web_ui_task.cancel()
             try:
-                await self.web_ui_task
-            except asyncio.CancelledError:
-                LOG.info("Web UI task cancelled.")
+                # 检查事件循环是否还在运行
+                loop = asyncio.get_event_loop()
+                if not loop.is_closed():
+                    self.web_ui_task.cancel()
+                    try:
+                        await self.web_ui_task
+                    except asyncio.CancelledError:
+                        LOG.info("Web UI task cancelled.")
+                else:
+                    LOG.warning("Event loop is already closed, cannot cancel Web UI task gracefully.")
+            except RuntimeError as e:
+                LOG.warning(f"Failed to cancel Web UI task: {e}")
         
         # 2. 停止 Flare tunnel（如果存在）
         if self.web_ui and self.web_ui.tunnel:
@@ -185,11 +193,19 @@ class AIGMPlugin(NcatBotPlugin):
         
         # 3. 关闭缓存管理器
         if self.cache_manager:
-            await self.cache_manager.shutdown()
+            try:
+                await self.cache_manager.shutdown()
+            except RuntimeError as e:
+                # 如果事件循环已关闭，缓存管理器可能无法正常关闭
+                LOG.warning(f"Failed to shutdown cache manager gracefully (event loop closed): {e}")
         
         # 4. 关闭数据库连接
         if self.db:
-            await self.db.close()
+            try:
+                await self.db.close()
+            except RuntimeError as e:
+                LOG.warning(f"Failed to close database gracefully (event loop closed): {e}")
+        
         # 注释掉是因为renderer关闭的时候，因为它处于另一个事件循环中，所以无法正常关闭，会卡住关闭流程
         # if self.renderer:
         #     await self.renderer.close()
