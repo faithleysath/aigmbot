@@ -66,9 +66,9 @@ class Visualizer:
                 if node_id in processed_nodes:
                     continue
 
-                label_parts = [f'Round {node_id}']
+                label_parts = [f'<b>Round {node_id}</b>']
                 if node_id == root_node:
-                    label_parts = ['Initial']
+                    label_parts = ['<b>Initial</b>']
                 
                 # 添加分支信息
                 node_branches = [b for b in all_branches if b['tip_round_id'] == node_id]
@@ -141,9 +141,9 @@ class Visualizer:
             for r in all_rounds:
                 round_id = r["round_id"]
                 
-                label_parts = [f'Round {round_id}']
+                label_parts = [f'<b>Round {round_id}</b>']
                 if r['parent_id'] == -1:
-                    label_parts = [f'Initial (Round {round_id})']
+                    label_parts = [f'<b>Initial (Round {round_id})</b>']
 
                 # 添加分支信息
                 node_branches = [b for b in all_branches if b['tip_round_id'] == round_id]
