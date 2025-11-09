@@ -165,8 +165,9 @@ class AIGMPlugin(NcatBotPlugin):
         # 4. 关闭数据库连接
         if self.db:
             await self.db.close()
-        if self.renderer:
-            await self.renderer.close()
+        # 注释掉是因为renderer关闭的时候，因为它处于另一个事件循环中，所以无法正常关闭，会卡住关闭流程
+        # if self.renderer:
+        #     await self.renderer.close()
         LOG.info(f"[{self.name}] 已卸载。")
 
     @filter_registry.group_filter
