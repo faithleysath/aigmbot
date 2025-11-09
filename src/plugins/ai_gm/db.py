@@ -1,9 +1,13 @@
 import aiosqlite
 from ncatbot.utils import get_log
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 import itertools
 
 LOG = get_log(__name__)
+
+# 用于跟踪当前事务深度的上下文变量
+_transaction_depth: ContextVar[int] = ContextVar('transaction_depth', default=0)
 
 
 class Database:
@@ -176,28 +180,36 @@ class Database:
         if not self.conn:
             raise RuntimeError("数据库未连接")
 
-        if getattr(self.conn, "in_transaction", False):
-            # Nested transaction: use savepoints
-            # 使用计数器生成安全的标识符
-            savepoint_id = next(self._savepoint_counter)
-            savepoint_name = f"sp_{savepoint_id}"
-            try:
-                await self.conn.execute(f"SAVEPOINT {savepoint_name};")
-                yield
-                await self.conn.execute(f"RELEASE SAVEPOINT {savepoint_name};")
-            except Exception:
-                await self.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name};")
-                await self.conn.execute(f"RELEASE SAVEPOINT {savepoint_name};")
-                raise
-        else:
-            # Top-level transaction
-            try:
-                await self.conn.execute("BEGIN IMMEDIATE;")
-                yield
-                await self.conn.commit()
-            except Exception:
-                await self.conn.rollback()
-                raise
+        # 获取当前事务深度
+        depth = _transaction_depth.get()
+        _transaction_depth.set(depth + 1)
+
+        try:
+            if depth > 0:
+                # Nested transaction: use savepoints
+                # 使用计数器生成安全的标识符（注意：这是全局计数器，确保唯一性）
+                savepoint_id = next(self._savepoint_counter)
+                savepoint_name = f"sp_{savepoint_id}"
+                try:
+                    await self.conn.execute(f"SAVEPOINT {savepoint_name};")
+                    yield
+                    await self.conn.execute(f"RELEASE SAVEPOINT {savepoint_name};")
+                except Exception:
+                    await self.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name};")
+                    await self.conn.execute(f"RELEASE SAVEPOINT {savepoint_name};")
+                    raise
+            else:
+                # Top-level transaction
+                try:
+                    await self.conn.execute("BEGIN IMMEDIATE;")
+                    yield
+                    await self.conn.commit()
+                except Exception:
+                    await self.conn.rollback()
+                    raise
+        finally:
+            # 恢复事务深度
+            _transaction_depth.set(depth)
 
     async def is_game_running(self, channel_id: str) -> bool:
         """

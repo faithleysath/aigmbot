@@ -138,40 +138,42 @@ class CacheManager:
             self._loaded = True
             return
 
-        # 先只做 IO 与反序列化（仅持有 _io_lock）
-        async with self._io_lock:
-            try:
-                async with aiofiles.open(self.cache_path, "r", encoding="utf-8") as f:
-                    content = await f.read()
-                    payload = json.loads(content)
-
-                # 先在本地变量里“组装好”恢复结果
-                pending_new_games_restored = payload.get("pending_new_games", {})
-                for key, game in pending_new_games_restored.items():
-                    if "create_time" in game and isinstance(game["create_time"], str):
-                        game["create_time"] = datetime.fromisoformat(game["create_time"])
-
-                raw_vote_cache = payload.get("vote_cache", {})
-                vote_cache_restored: dict[str, dict[str, VoteCacheItem]] = {}
-                for group_id, messages in raw_vote_cache.items():
-                    vote_cache_restored[group_id] = {}
-                    for msg_id, item_payload in messages.items():
-                        item: VoteCacheItem = {"votes": {}}
-                        if "content" in item_payload and item_payload["content"] is not None:
-                            item["content"] = item_payload["content"]
-                        if "votes" in item_payload:
-                            item["votes"] = {str(k): set(v) for k, v in item_payload["votes"].items()}
-                        vote_cache_restored[group_id][msg_id] = item
-            except Exception as e:
-                LOG.error(f"从磁盘加载缓存失败: {e}", exc_info=True)
-                # 即使失败也标为已尝试加载，避免运行中再次触发
-                self._loaded = True
-                return
-
-        # 再切换内存引用（仅持有 _cache_lock，避免与 save_to_disk 形成反转）
+        # 统一锁顺序：_cache_lock -> _io_lock，避免与 save_to_disk 死锁
         async with self._cache_lock:
-            self.pending_new_games = pending_new_games_restored
-            self.vote_cache = vote_cache_restored
+            async with self._io_lock:
+                try:
+                    async with aiofiles.open(self.cache_path, "r", encoding="utf-8") as f:
+                        content = await f.read()
+                        payload = json.loads(content)
+
+                    # 先在本地变量里"组装好"恢复结果
+                    pending_new_games_restored = payload.get("pending_new_games", {})
+                    for key, game in pending_new_games_restored.items():
+                        if "create_time" in game and isinstance(game["create_time"], str):
+                            game["create_time"] = datetime.fromisoformat(game["create_time"])
+
+                    raw_vote_cache = payload.get("vote_cache", {})
+                    vote_cache_restored: dict[str, dict[str, VoteCacheItem]] = {}
+                    for group_id, messages in raw_vote_cache.items():
+                        vote_cache_restored[group_id] = {}
+                        for msg_id, item_payload in messages.items():
+                            item: VoteCacheItem = {"votes": {}}
+                            if "content" in item_payload and item_payload["content"] is not None:
+                                item["content"] = item_payload["content"]
+                            if "votes" in item_payload:
+                                item["votes"] = {str(k): set(v) for k, v in item_payload["votes"].items()}
+                            vote_cache_restored[group_id][msg_id] = item
+
+                    # 直接更新内存状态（已在 _cache_lock 保护下）
+                    self.pending_new_games = pending_new_games_restored
+                    self.vote_cache = vote_cache_restored
+
+                except Exception as e:
+                    LOG.error(f"从磁盘加载缓存失败: {e}", exc_info=True)
+                    # 即使失败也标为已尝试加载，避免运行中再次触发
+                    self._loaded = True
+                    return
+
         LOG.info("成功从磁盘加载缓存。")
         self._loaded = True
 

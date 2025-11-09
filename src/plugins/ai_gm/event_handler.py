@@ -329,8 +329,13 @@ class EventHandler:
         message_id = str(event.message_id)
         emoji_id = str(event.emoji_like_id)
 
+        # 读取游戏状态并验证（原子操作）
         game = await self.db.get_game_by_channel_id(group_id)
-        if not game or game["is_frozen"]:
+        if not game:
+            return
+        
+        # 提前检查冻结状态，避免不必要的后续操作
+        if game["is_frozen"]:
             return
 
         game_id = game["game_id"]
@@ -341,7 +346,7 @@ class EventHandler:
         if message_id != main_message_id and message_id not in candidate_ids:
             return
 
-        # 更新投票缓存
+        # 更新投票缓存（即使游戏随后被冻结，投票记录也会保留但不会立即生效）
         if self.cache_manager:
             await self.cache_manager.update_vote(
                 group_id, message_id, emoji_id, user_id, event.is_add or False
@@ -362,6 +367,7 @@ class EventHandler:
             return
 
         # 根据消息ID和表情ID分发给不同的处理函数
+        # 注意：这些函数内部会再次检查游戏状态
         if message_id == main_message_id:
             await self._handle_admin_main_message_reaction(
                 game_id, group_id, main_message_id, emoji_id
