@@ -178,14 +178,9 @@ class AIGMPlugin(NcatBotPlugin):
     branch_group = aigm_group.group("branch", description="分支管理")
 
     @branch_group.command("list", description="可视化显示当前游戏的分支")
-    async def aigm_branch_list(self, event: GroupMessageEvent):
+    async def aigm_branch_list(self, event: GroupMessageEvent, mode: str | None = None):
         if self.command_handler:
-            await self.command_handler.handle_branch_list(event)
-
-    @branch_group.command("listall", description="可视化显示当前游戏的完整分支图")
-    async def aigm_branch_list_all(self, event: GroupMessageEvent):
-        if self.command_handler:
-            await self.command_handler.handle_branch_list_all(event)
+            await self.command_handler.handle_branch_list(event, mode)
 
     @branch_group.command("show", description="查看指定分支顶端的内容")
     async def aigm_branch_show(self, event: GroupMessageEvent, branch_name: str):

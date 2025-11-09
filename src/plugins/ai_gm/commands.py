@@ -138,8 +138,7 @@ class CommandHandler:
 /aigm game sethost-by-id <id> @user - [主持人/管理员] 变更指定ID游戏的主持人
 
 分支操作:
-/aigm branch list - 可视化显示分支图
-/aigm branch listall - 可视化显示完整分支图
+/aigm branch list [all] - 可视化显示分支图（all: 显示完整图）
 /aigm branch show <name> - 查看指定分支顶端的内容
 /aigm branch history [name] [limit=N] - 查看指定分支的历史记录
 /aigm branch create <name> [from_round_id] - [主持人/管理员] 创建新分支
@@ -191,8 +190,8 @@ class CommandHandler:
 
         await api.post_group_array_msg(event.group_id, message_array)
 
-    async def handle_branch_list(self, event: GroupMessageEvent):
-        """处理 /aigm branch list 命令"""
+    async def handle_branch_list(self, event: GroupMessageEvent, mode: str | None = None):
+        """处理 /aigm branch list [all] 命令"""
         group_id = str(event.group_id)
         game = await self.db.get_game_by_channel_id(group_id)
 
@@ -201,9 +200,13 @@ class CommandHandler:
             return
 
         game_id = game['game_id']
-        await event.reply("正在生成分支图，请稍候...", at=False)
         
-        image_bytes = await self.visualizer.create_branch_graph(game_id)
+        if mode == "all":
+            await event.reply("正在生成完整分支图，请稍候...", at=False)
+            image_bytes = await self.visualizer.create_full_branch_graph(game_id)
+        else:
+            await event.reply("正在生成分支图，请稍候...", at=False)
+            image_bytes = await self.visualizer.create_branch_graph(game_id)
 
         if image_bytes:
             await self.api.post_group_file(
@@ -235,28 +238,6 @@ class CommandHandler:
 
         tip_round_id = branch['tip_round_id']
         await self.handle_round_history(event, tip_round_id, limit)
-
-    async def handle_branch_list_all(self, event: GroupMessageEvent):
-        """处理 /aigm branch list all 命令"""
-        group_id = str(event.group_id)
-        game = await self.db.get_game_by_channel_id(group_id)
-
-        if not game:
-            await event.reply("当前群组没有正在进行的游戏。", at=False)
-            return
-
-        game_id = game['game_id']
-        await event.reply("正在生成完整分支图，请稍候...", at=False)
-        
-        image_bytes = await self.visualizer.create_full_branch_graph(game_id)
-
-        if image_bytes:
-            await self.api.post_group_file(
-                group_id,
-                image=f"data:image/png;base64,{bytes_to_base64(image_bytes)}",
-            )
-        else:
-            await event.reply("生成完整分支图失败，请检查日志。", at=False)
 
     async def _show_round_content(self, event: GroupMessageEvent, round_id: int):
         """根据 round_id 显示其内容的通用函数"""
