@@ -24,7 +24,7 @@ def _calculate_reading_time(text: str) -> str:
 
 class MarkdownRenderer:
     def __init__(self):
-        self.md = MarkdownIt("commonmark").disable("html_block").disable("html_inline")
+        self.md = MarkdownIt("commonmark", {"breaks": True}).disable("html_block").disable("html_inline")
         self._p = None
         self._browser = None
         self._init_lock = asyncio.Lock()

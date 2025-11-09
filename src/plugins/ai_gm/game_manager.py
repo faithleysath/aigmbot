@@ -250,7 +250,7 @@ class GameManager:
 
             await self.api.post_group_msg(
                 channel_id,
-                text=f"🏆 本轮胜出选项：{winner_content}" + "\n".join(result_lines),
+                text=f"🏆 本轮胜出选项：{winner_content}\n" + "\n".join(result_lines),
                 reply=main_message_id,
             )
 
