@@ -142,14 +142,27 @@ class AIGMPlugin(NcatBotPlugin):
 
     async def on_close(self):
         """插件关闭时执行的操作"""
+        # 1. 取消 Web UI 任务
         if self.web_ui_task and not self.web_ui_task.done():
             self.web_ui_task.cancel()
             try:
                 await self.web_ui_task
             except asyncio.CancelledError:
                 LOG.info("Web UI task cancelled.")
+        
+        # 2. 停止 Flare tunnel（如果存在）
+        if self.web_ui and self.web_ui.tunnel:
+            try:
+                self.web_ui.tunnel.stop()
+                LOG.info("Flare tunnel stopped successfully.")
+            except Exception as e:
+                LOG.error(f"Error stopping tunnel during shutdown: {e}", exc_info=True)
+        
+        # 3. 关闭缓存管理器
         if self.cache_manager:
             await self.cache_manager.shutdown()
+        
+        # 4. 关闭数据库连接
         if self.db:
             await self.db.close()
         if self.renderer:

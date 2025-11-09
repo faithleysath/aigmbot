@@ -1,16 +1,15 @@
 import asyncio
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 import uvicorn
 from contextlib import asynccontextmanager
-import threading
 
 from ncatbot.utils import get_log
 
 from .db import Database
-from flaredantic import FlareTunnel, FlareConfig
+from flaredantic import FlareTunnel, FlareConfig, CloudflaredError
 
 LOG = get_log(__name__)
 
@@ -22,6 +21,7 @@ class WebUI:
         self.templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
         self.tunnel: FlareTunnel | None = None
         self.tunnel_url: str | None = None
+        self.tunnel_ready = asyncio.Event()
         self._setup_routes()
 
     def _setup_routes(self):
@@ -36,14 +36,6 @@ class WebUI:
     async def lifespan(self, app: FastAPI):
         # Startup
         LOG.info("Web UI is starting up...")
-        threading.Thread(target=self.start_tunnel, daemon=True).start()
-        yield
-        # Shutdown
-        LOG.info("Web UI is shutting down...")
-        if self.tunnel:
-            self.tunnel.stop()
-
-    def start_tunnel(self):
         try:
             config = FlareConfig(
                 port=8000,
@@ -53,17 +45,50 @@ class WebUI:
             self.tunnel = FlareTunnel(config)
             self.tunnel.start()
             self.tunnel_url = self.tunnel.tunnel_url
+            self.tunnel_ready.set()
             LOG.info(f"Flare tunnel started at: {self.tunnel_url}")
+        except CloudflaredError as e:
+            LOG.error(f"Failed to start flare tunnel (Cloudflare error): {e}", exc_info=True)
+            self.tunnel_url = None
+            self.tunnel_ready.set()  # 即使失败也设置标志
         except Exception as e:
-            LOG.error(f"Failed to start flare tunnel: {e}", exc_info=True)
+            LOG.error(f"Failed to start flare tunnel (unexpected error): {e}", exc_info=True)
+            self.tunnel_url = None
+            self.tunnel_ready.set()  # 即使失败也设置标志
+        
+        yield
+        
+        # Shutdown
+        LOG.info("Web UI is shutting down...")
+        if self.tunnel:
+            try:
+                self.tunnel.stop()
+                LOG.info("Flare tunnel stopped successfully.")
+            except Exception as e:
+                LOG.error(f"Error stopping tunnel: {e}", exc_info=True)
 
     async def run_in_background(self):
-        """Run the FastAPI app in a separate thread."""
+        """Run the FastAPI app."""
         config = uvicorn.Config(self.app, host="127.0.0.1", port=8000, log_level="info")
         server = uvicorn.Server(config)
+        await server.serve()
+
+    async def wait_for_tunnel(self, timeout: float = 10.0) -> bool:
+        """
+        等待 tunnel 启动完成。
         
-        loop = asyncio.get_event_loop()
-        await loop.create_task(server.serve())
+        Args:
+            timeout: 超时时间（秒）
+            
+        Returns:
+            bool: 如果 tunnel 成功启动返回 True，否则返回 False
+        """
+        try:
+            await asyncio.wait_for(self.tunnel_ready.wait(), timeout=timeout)
+            return self.tunnel_url is not None
+        except asyncio.TimeoutError:
+            LOG.warning("Tunnel startup timed out")
+            return False
 
     async def route_game_list(self, request: Request):
         games = await self.db.get_all_games()
@@ -89,9 +114,6 @@ class WebUI:
         round_info = await self.db.get_round_info(round_id)
         if not round_info:
             raise HTTPException(status_code=404, detail="Round not found")
-        
-        # Find next and previous rounds
-        parent_id = round_info['parent_id']
         
         # Find next and previous rounds
         parent_id = round_info['parent_id']

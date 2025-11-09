@@ -171,8 +171,20 @@ class CommandHandler:
 
     async def handle_webui(self, event: GroupMessageEvent):
         """处理 /aigm webui 命令"""
-        if not self.web_ui or not self.web_ui.tunnel_url:
-            await event.reply("Web UI 正在启动中或启动失败，请稍后再试。", at=False)
+        if not self.web_ui:
+            await event.reply("Web UI 未启用。", at=False)
+            return
+        
+        # 等待 tunnel 就绪（最多等待 5 秒）
+        if not self.web_ui.tunnel_ready.is_set():
+            await event.reply("Web UI 正在启动中，请稍后再试...", at=False)
+            tunnel_ready = await self.web_ui.wait_for_tunnel(timeout=5.0)
+            if not tunnel_ready:
+                await event.reply("Web UI 启动失败或超时，请检查日志。", at=False)
+                return
+        
+        if not self.web_ui.tunnel_url:
+            await event.reply("Web UI 启动失败，请检查日志。", at=False)
             return
 
         base_url = self.web_ui.tunnel_url
