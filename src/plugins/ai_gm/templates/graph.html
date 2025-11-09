@@ -31,22 +31,36 @@
                 }
                 const data = await response.json();
                 
-                let mermaidDefinition = 'graph TD;\\n';
+                // 使用 flowchart 代替 graph，对特殊字符支持更好
+                let mermaidDefinition = 'flowchart TD;\n';
 
                 data.nodes.forEach(node => {
-                    // Sanitize label for Mermaid syntax
-                    const sanitizedLabel = node.label.replace(/"/g, '#quot;').replace(/\\n/g, '<br/>');
-                    mermaidDefinition += `    ${node.id}("${sanitizedLabel}");\\n`;
+                    // 正确清理和转义标签文本
+                    // 1. 将换行符转换为 HTML <br/>
+                    // 2. 转义双引号为 &quot;
+                    // 3. 转义其他 HTML 特殊字符
+                    let sanitizedLabel = node.label
+                        .replace(/&/g, '&amp;')
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;')
+                        .replace(/"/g, '&quot;')
+                        .replace(/\n/g, '<br/>');
+                    
+                    // 使用方括号节点以支持多行文本
+                    mermaidDefinition += `    ${node.id}["${sanitizedLabel}"];\n`;
                 });
 
                 data.edges.forEach(edge => {
-                    mermaidDefinition += `    ${edge.from} --> ${edge.to};\\n`;
+                    mermaidDefinition += `    ${edge.from} --> ${edge.to};\n`;
                 });
 
+                // 调试：输出生成的 Mermaid 定义
+                console.log('Generated Mermaid definition:', mermaidDefinition);
+
                 const container = document.querySelector('.mermaid');
-                container.innerHTML = mermaidDefinition;
+                container.textContent = mermaidDefinition;
                 
-                // Tell Mermaid to render the new content
+                // 渲染新内容
                 await mermaid.run({
                     nodes: [container]
                 });
@@ -54,7 +68,7 @@
             } catch (error) {
                 console.error('Error rendering graph:', error);
                 const container = document.querySelector('.mermaid');
-                container.innerHTML = 'graph TD; A[Error loading graph];';
+                container.textContent = 'flowchart TD; A[Error loading graph];';
                 await mermaid.run({
                     nodes: [container]
                 });
