@@ -50,7 +50,7 @@ class GameManager:
         try:
             # 1. 在数据库中创建游戏记录
             game_id = await self.db.create_game(group_id, user_id, system_prompt)
-            LOG.info(f"群 {group_id} 创建了新游戏，ID: {game_id}。")
+            LOG.info(f"群 {group_id} 创建了新游戏，ID: {game_id}")
 
             # 2. 调用 LLM 获取开场白
             await self.api.post_group_msg(
@@ -80,7 +80,7 @@ class GameManager:
 
             await self.db.update_game_head_branch(game_id, branch_id)
 
-            LOG.info(f"游戏 {game_id} 的初始 round 和 branch 已创建。")
+            LOG.debug(f"游戏 {game_id} 的初始 round 和 branch 已创建")
 
             # 4. 检出 head，向玩家展示
             if game_id is not None:
@@ -92,7 +92,7 @@ class GameManager:
             # 如果游戏记录已创建，则删除
             if game_id and self.db:
                 await self.db.delete_game(game_id)
-                LOG.info(f"已清理失败的游戏记录，ID: {game_id}。")
+                LOG.info(f"已清理失败的游戏记录，ID: {game_id}")
 
     async def checkout_head(self, game_id: int):
         """
@@ -177,7 +177,7 @@ class GameManager:
                 except Exception as e:
                     LOG.warning(f"为消息 {main_message_id} 贴表情 {emoji_id} 失败: {e}")
 
-            LOG.info(f"游戏 {game_id} 已成功检出 head，主消息 ID: {main_message_id}")
+            LOG.debug(f"游戏 {game_id} 已成功检出 head，主消息 ID: {main_message_id}")
 
         except Exception as e:
             LOG.error(f"检出 head (game_id: {game_id}) 时出错: {e}", exc_info=True)
@@ -392,7 +392,7 @@ class GameManager:
                 head_branch_id = head_branch_id_tuple[0]
                 await self.db.update_branch_tip(head_branch_id, parent_id)
 
-            LOG.info(f"游戏 {game_id} 已成功回退到 round {parent_id}。")
+            LOG.debug(f"游戏 {game_id} 已成功回退到 round {parent_id}")
             await self.api.post_group_msg(
                 str(channel_id), text="🔄 游戏已成功回退到上一轮。"
             )
@@ -441,7 +441,7 @@ class GameManager:
                 raise ValueError(f"目标回合 {target_round_id} 不存在")
 
             await self.db.create_branch(game_id, new_branch_name, target_round_id)
-            LOG.info(f"游戏 {game_id} 从 round {target_round_id} 创建了新分支 '{new_branch_name}'")
+            LOG.debug(f"游戏 {game_id} 从 round {target_round_id} 创建了新分支 '{new_branch_name}'")
             if channel_id:
                 await self.api.post_group_msg(
                     str(channel_id),
@@ -477,7 +477,7 @@ class GameManager:
                 raise ValueError(f"找不到名为 '{branch_name}' 的分支")
 
             await self.db.update_game_head_branch(game_id, branch["branch_id"])
-            LOG.info(f"游戏 {game_id} 的 HEAD 已切换到分支 '{branch_name}'")
+            LOG.debug(f"游戏 {game_id} 的 HEAD 已切换到分支 '{branch_name}'")
 
             if channel_id:
                 await self.api.post_group_msg(
@@ -515,7 +515,7 @@ class GameManager:
                 raise ValueError(f"目标回合 {round_id} 不存在")
 
             await self.db.update_branch_tip(head_branch_id, round_id)
-            LOG.info(f"游戏 {game_id} 的 HEAD 分支已重置到 round {round_id}")
+            LOG.debug(f"游戏 {game_id} 的 HEAD 分支已重置到 round {round_id}")
 
             if channel_id:
                 await self.api.post_group_msg(
