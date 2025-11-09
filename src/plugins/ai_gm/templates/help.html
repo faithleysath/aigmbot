@@ -95,5 +95,21 @@
         <li><code class="command-name">/aigm round history &lt;id&gt; [limit=N]</code> - <span class="command-desc">查看指定回合及其历史记录</span></li>
     </ul>
 
+    <h2>标签操作</h2>
+    <ul class="command-list">
+        <li><code class="command-name">/aigm tag list</code> - <span class="command-desc">列出所有标签</span></li>
+        <li><code class="command-name">/aigm tag show <name></code> - <span class="command-desc">查看标签指向的回合内容</span></li>
+        <li><code class="command-name">/aigm tag history <name> [limit=N]</code> - <span class="command-desc">查看标签指向的回合的历史记录</span></li>
+        <li><code class="command-name">/aigm tag create <name> [round_id]</code> - <span class="command-desc">创建新标签</span> <span class="permission">[主持人/管理员]</span></li>
+        <li><code class="command-name">/aigm tag delete <name></code> - <span class="command-desc">删除标签</span> <span class="permission">[主持人/管理员]</span></li>
+    </ul>
+
+    <h2>管理员命令</h2>
+    <ul class="command-list">
+        <li><code class="command-name">/aigm admin unfreeze</code> - <span class="command-desc">强制解冻当前游戏</span> <span class="permission">[群管理/ROOT]</span></li>
+        <li><code class="command-name">/aigm admin refresh-tunnel</code> - <span class="command-desc">重新刷新 Cloudflare tunnel</span> <span class="permission">[ROOT]</span></li>
+        <li><code class="command-name">/aigm admin delete <id></code> - <span class="command-desc">删除指定ID的游戏</span> <span class="permission">[ROOT]</span></li>
+    </ul>
+
 </body>
 </html>

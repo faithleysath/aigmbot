@@ -391,6 +391,11 @@ class AIGMPlugin(NcatBotPlugin):
         if self.command_handler:
             await self.command_handler.handle_admin_delete_game(event, game_id)
 
+    @admin_group.command("clear-help-cache", description="[ROOT] 清除帮助图片缓存")
+    async def aigm_admin_clear_help_cache(self, event: GroupMessageEvent):
+        if self.command_handler:
+            await self.command_handler.handle_admin_clear_help_cache(event)
+
     # --- Cache Subcommands ---
     cache_group = aigm_group.group("cache", description="缓存管理")
     pending_group = cache_group.group("pending", description="待处理游戏缓存")

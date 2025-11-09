@@ -128,9 +128,7 @@ class CommandHandler:
 
 
     async def handle_help(self, event: GroupMessageEvent):
-        """处理 /aigm help 命令，将其渲染为图片发送"""
-        await event.reply("正在生成帮助图片，请稍候...", at=False)
-        
+        """处理 /aigm help 命令，将其渲染为图片发送"""        
         image_bytes = await self.renderer.render_help_page()
         
         if image_bytes:
@@ -810,3 +808,13 @@ class CommandHandler:
             await event.reply(f"✅ Tunnel 刷新成功！\n新地址: {self.web_ui.tunnel_url}", at=False)
         else:
             await event.reply("❌ Tunnel 刷新失败，请查看日志获取详细信息。", at=False)
+
+    async def handle_admin_clear_help_cache(self, event: GroupMessageEvent):
+        """处理 /aigm admin clear-help-cache 命令"""
+        # 权限检查：只允许 ROOT 用户
+        if not self.rbac_manager.user_has_role(str(event.user_id), "root"):
+            await event.reply("权限不足。只有root用户才能清除帮助缓存。", at=False)
+            return
+        
+        self.renderer.clear_help_cache()
+        await event.reply("✅ 已成功清除帮助图片缓存。", at=False)

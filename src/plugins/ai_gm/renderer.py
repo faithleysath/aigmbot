@@ -53,6 +53,11 @@ class MarkdownRenderer:
         self._max_pages = 50  # 最大页面数限制
         self._render_timeout = 30.0  # 单次渲染超时（秒）
         self._help_image_cache: bytes | None = None
+        
+    def clear_help_cache(self):
+        """清除帮助图片缓存"""
+        LOG.info("帮助图片缓存已清除")
+        self._help_image_cache = None
 
     async def _is_browser_healthy(self) -> bool:
         """检查浏览器健康状态"""
