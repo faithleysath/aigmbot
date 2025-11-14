@@ -16,14 +16,14 @@ TRANSCRIPTION_SYSTEM_PROMPT = """
 **输入格式（JSON）：**
 {
   "context_turns_before": [
-    // 前4轮的对话，{ "role": "user", "content": "..." }, { "role": "assistant", "content": "..." }
+    // 前20轮的对话，{ "role": "user", "content": "..." }, { "role": "assistant", "content": "..." }
   ],
   "current_turn": {
     "user_content": "玩家的本轮输入，例如：'选择选项A'",
     "assistant_content": "GM的本轮输出，包含叙事、弹幕、选项列表等。"
   },
   "context_turns_after": [
-    // 后4轮的对话，{ "role": "user", "content": "..." }, { "role": "assistant", "content": "..." }
+    // 后20轮的对话，{ "role": "user", "content": "..." }, { "role": "assistant", "content": "..." }
   ]
 }
 
@@ -56,7 +56,7 @@ TRANSCRIPTION_SYSTEM_PROMPT = """
   * 你**必须**将这些破碎、啰嗦或不规范的句子，纠正并重组成**符合中文网文阅读习惯的、流畅的、完整的句子**。
   * 修复句子破碎、逗号过多等问题，重组为流畅中文。同时，确保语言符合网文习惯：使用短句段落增强可读性，避免冗长复合句。
 * **原则四：【短句段落，增强可读性】**
-  * 每段话的逗号加句号的总和不应超过5个，若超过则需要拆分成多段。
+  * 每段的逗号数**不应超过3个**，避免使用过长的复合句。每段的句号数**不应超过2个**。
 
 3. 【处理 user_content：叙事模式的“分诊”系统（核心规则）】
 你必须按照以下优先级顺序，来判断 user_content 属于何种模式，并执行相应的转写规则：
@@ -180,13 +180,13 @@ def prepare_turn_data(history: list[dict], turn_number: int) -> dict[str, Any]:
     user_content = history[current_turn_index]["content"]
     assistant_content = history[current_turn_index + 1]["content"]
 
-    # 上下文：往前取4个回合（8条消息）
-    context_before_start = max(0, current_turn_index - 8)
+    # 上下文：往前取20个回合（40条消息）
+    context_before_start = max(0, current_turn_index - 40)
     context_turns_before = history[context_before_start:current_turn_index]
 
-    # 上下文：往后取4个回合（8条消息）
+    # 上下文：往后取20个回合（40条消息）
     context_after_start = current_turn_index + 2
-    context_after_end = context_after_start + 8
+    context_after_end = context_after_start + 40
     context_turns_after = history[context_after_start:context_after_end]
 
     return {
