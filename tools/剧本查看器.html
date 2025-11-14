@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>魔女轮舞 - 剧本查看器</title>
+    <!-- 引入Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入Inter字体 -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* 使用Inter字体作为基础字体 */
+        body {
+            font-family: 'Inter', 'Microsoft YaHei', sans-serif;
+        }
+        /* 隐藏滚动条但保留滚动功能 */
+        .content-scrollable::-webkit-scrollbar {
+            display: none;
+        }
+        .content-scrollable {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+        /* 激活的Tab样式 */
+        .tab-active {
+            border-bottom-color: #818cf8; /* indigo-400 */
+            color: #e0e7ff; /* indigo-100 */
+        }
+        /* 导航点击时的Glow高亮效果 */
+        .highlight-glow {
+            transition: box-shadow 0.5s ease-in-out;
+            box-shadow: 0 0 15px 5px rgba(165, 180, 252, 0.7); /* indigo-300 glow */
+        }
+        /* 导航项激活时的样式 */
+        .nav-link-active {
+            background-color: #4f46e5; /* indigo-700 */
+            color: #ffffff !important; /* white */
+            font-weight: 600; /* semibold */
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200 min-h-screen p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto flex flex-col h-[95vh]">
+        <!-- 头部 -->
+        <header class="text-center mb-6">
+            <h1 class="text-3xl md:text-4xl font-bold text-indigo-400">《魔女轮舞：绝境直播间》</h1>
+            <p class="text-lg text-gray-400 mt-2">剧本与历史查看器</p>
+        </header>
+
+        <!-- 文件上传与错误提示 -->
+        <div class="flex-shrink-0 mb-6 flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
+            <div>
+                <label for="file-upload" class="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg inline-block transition duration-300 shadow-lg">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 inline-block mr-2" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+                    </svg>
+                    加载JSON剧本文件
+                </label>
+                <input id="file-upload" type="file" class="hidden" accept="application/json">
+            </div>
+            <!-- 错误提示框 -->
+            <div id="error-box" class="hidden p-3 bg-red-800 text-red-100 rounded-lg text-sm shadow-md">
+                <span id="error-message"></span>
+            </div>
+        </div>
+
+        <!-- 选项卡与内容区域 -->
+        <div class="flex-grow flex flex-col bg-gray-800 rounded-lg shadow-2xl overflow-hidden">
+            <!-- 选项卡导航 -->
+            <div class="flex-shrink-0 border-b border-gray-700">
+                <nav class="flex space-x-1 md:space-x-4 px-4" aria-label="Tabs">
+                    <button id="tab-setting" class="tab-button tab-active text-indigo-300 border-indigo-400 py-4 px-3 md:px-6 block hover:text-indigo-300 font-medium text-sm md:text-base border-b-2 transition duration-300">
+                        游戏设定 (System Prompt)
+                    </button>
+                    <button id="tab-history" class="tab-button text-gray-400 border-transparent py-4 px-3 md:px-6 block hover:text-gray-200 font-medium text-sm md:text-base border-b-2 transition duration-300">
+                        游戏历史 (History)
+                    </button>
+                </nav>
+            </div>
+
+            <!-- 内容区域 -->
+            <div class="flex-grow h-0">
+                <!-- 游戏设定 (Tab 1) -->
+                <div id="content-setting" class="tab-content content-scrollable h-full overflow-y-auto p-4 md:p-8">
+                    <pre id="setting-pre" class="whitespace-pre-wrap text-gray-300 text-sm leading-relaxed font-sans">请先加载一个JSON文件...</pre>
+                </div>
+
+                <!-- 游戏历史 (Tab 2) -->
+                <div id="content-history" class="tab-content h-full flex hidden">
+                    <!-- 导航栏 (左侧) -->
+                    <nav id="history-nav" class="w-1/3 md:w-1/4 h-full bg-gray-800 border-r border-gray-700 overflow-y-auto content-scrollable p-4 space-y-2 flex-shrink-0">
+                        <p class="text-gray-400 text-center text-sm">请先加载JSON文件...</p>
+                        <!-- 导航链接将注入这里 -->
+                    </nav>
+                    <!-- 聊天内容 (右侧) -->
+                    <div id="history-content-area" class="w-2/3 md:w-3/4 h-full overflow-y-auto overflow-x-hidden content-scrollable p-4 md:p-8">
+                        <div id="history-container" class="space-y-6">
+                            <p class="text-gray-400 text-center">请先加载JSON文件...</p>
+                            <!-- 聊天气泡将会被注入这里 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM 元素获取 ---
+        const fileUpload = document.getElementById('file-upload');
+        const tabSetting = document.getElementById('tab-setting');
+        const tabHistory = document.getElementById('tab-history');
+        const contentSetting = document.getElementById('content-setting');
+        const contentHistory = document.getElementById('content-history');
+        const settingPre = document.getElementById('setting-pre');
+        const historyContainer = document.getElementById('history-container');
+        const historyNav = document.getElementById('history-nav');
+        const historyContentArea = document.getElementById('history-content-area');
+        const errorBox = document.getElementById('error-box');
+        const errorMessage = document.getElementById('error-message');
+
+        const tabs = [tabSetting, tabHistory];
+        const contents = [contentSetting, contentHistory];
+
+        // --- 错误提示 ---
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorBox.classList.remove('hidden');
+            setTimeout(() => {
+                errorBox.classList.add('hidden');
+            }, 5000);
+        }
+
+        function hideError() {
+            errorBox.classList.add('hidden');
+        }
+
+        // --- 选项卡切换逻辑 ---
+        tabs.forEach(clickedTab => {
+            clickedTab.addEventListener('click', () => {
+                tabs.forEach(tab => {
+                    tab.classList.remove('tab-active', 'text-indigo-300', 'border-indigo-400');
+                    tab.classList.add('text-gray-400', 'border-transparent');
+                });
+                contents.forEach(c => c.classList.add('hidden'));
+
+                clickedTab.classList.remove('text-gray-400', 'border-transparent');
+                clickedTab.classList.add('tab-active', 'text-indigo-300', 'border-indigo-400');
+                
+                if (clickedTab.id === 'tab-setting') {
+                    contentSetting.classList.remove('hidden');
+                } else if (clickedTab.id === 'tab-history') {
+                    contentHistory.classList.remove('hidden');
+                }
+            });
+        });
+
+        // --- 文件加载与解析 ---
+        fileUpload.addEventListener('change', handleFileLoad);
+
+        function handleFileLoad(event) {
+            hideError();
+            const file = event.target.files[0];
+            if (!file) return;
+            if (file.type !== 'application/json') {
+                showError('文件格式错误：请上传一个 .json 文件。');
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const text = e.target.result;
+                    const data = JSON.parse(text);
+                    renderData(data);
+                } catch (err) {
+                    console.error('JSON 解析失败:', err);
+                    showError('JSON 解析失败：文件内容可能已损坏。');
+                }
+            };
+            reader.onerror = () => {
+                console.error('文件读取失败');
+                showError('文件读取时发生错误。');
+            };
+            reader.readAsText(file);
+        }
+
+        // --- 视图同步高亮与滚动 ---
+
+        // (辅助函数) 仅高亮气泡
+        function highlightBubble(bubbleId) {
+            const targetElement = document.getElementById(bubbleId);
+            if (!targetElement) return;
+            const bubble = targetElement.querySelector('div'); // 获取气泡内部的div
+            if (bubble) {
+                // 移除其他可能的高亮
+                document.querySelectorAll('.highlight-glow').forEach(el => el.classList.remove('highlight-glow'));
+                
+                bubble.classList.add('highlight-glow');
+                setTimeout(() => {
+                    bubble.classList.remove('highlight-glow');
+                }, 2000); // 2秒后移除高亮
+            }
+        }
+
+        // (辅助函数) 仅高亮导航链接
+        function highlightNavLink(navLinkId) {
+            const navLinkElement = document.getElementById(navLinkId);
+            if (!navLinkElement) return;
+
+            // 1. 移除所有旧高亮
+            document.querySelectorAll('.nav-link-active').forEach(el => {
+                el.classList.remove('nav-link-active', 'text-white', 'font-semibold');
+                el.classList.add('text-gray-300');
+            });
+
+            // 2. 添加新高亮
+            navLinkElement.classList.add('nav-link-active', 'text-white', 'font-semibold');
+            navLinkElement.classList.remove('text-gray-300');
+        }
+
+        // (点击导航栏时调用)
+        function smoothScrollToBubble(event, bubbleId, navLinkId) {
+            event.preventDefault(); // 阻止默认的"跳"
+            
+            // 1. 高亮气泡
+            highlightBubble(bubbleId);
+            // 2. 高亮导航项
+            highlightNavLink(navLinkId);
+
+            // 3. 滚动内容区
+            const targetElement = document.getElementById(bubbleId);
+            const contentArea = document.getElementById('history-content-area');
+            if (targetElement && contentArea) {
+                contentArea.scrollTo({
+                    top: targetElement.offsetTop - 20, // 减去20px的padding
+                    behavior: 'smooth'
+                });
+            }
+        }
+
+        // (点击玩家气泡时调用)
+        function syncNavToBubble(bubbleId, navLinkId) {
+            // 1. 高亮气泡
+            highlightBubble(bubbleId);
+            // 2. 高亮导航项
+            highlightNavLink(navLinkId);
+
+            // 3. 滚动导航区
+            const navLinkElement = document.getElementById(navLinkId);
+            if (navLinkElement) {
+                historyNav.scrollTo({
+                    top: navLinkElement.offsetTop - (historyNav.clientHeight / 2) + (navLinkElement.clientHeight / 2), // 尝试滚动到中间
+                    behavior: 'smooth'
+                });
+            }
+        }
+
+
+        // --- 数据渲染 (已更新) ---
+        function renderData(data) {
+            // 1. 渲染游戏设定 (system_prompt)
+            if (data.system_prompt && typeof data.system_prompt === 'string') {
+                settingPre.textContent = data.system_prompt;
+            } else {
+                settingPre.textContent = '未在JSON文件中找到 "system_prompt" 字段。';
+            }
+
+            // 2. 渲染游戏历史 (history)
+            if (data.history && Array.isArray(data.history)) {
+                historyContainer.innerHTML = '';
+                historyNav.innerHTML = ''; 
+
+                let historyHtml = '';
+                let navHtml = '<h3 class="text-lg font-semibold text-indigo-300 mb-4 bg-gray-800 py-2">玩家回合导航</h3>';
+                let userMessageCount = 1; // 导航项标号
+                
+                data.history.forEach((message, index) => {
+                    const messageId = `history-item-${index}`;
+                    const navLinkId = `nav-link-${index}`; // 导航链接的唯一ID
+
+                    if (message.role && message.content) {
+                        const tempDiv = document.createElement('div');
+                        tempDiv.textContent = message.content;
+                        const safeContent = `<pre class="whitespace-pre-wrap font-sans break-words">${tempDiv.innerHTML}</pre>`;
+
+                        if (message.role === 'user') {
+                            // 1. 创建导航链接
+                            const rawTitle = message.content.replace(/[\r\n]/g, ' ');
+                            const title = rawTitle.length > 15 ? rawTitle.substring(0, 15) + '...' : rawTitle;
+                            const navTitle = `${userMessageCount++}. ${title}`; // 加上标号
+                            
+                            navHtml += `
+                                <a href="#${messageId}" 
+                                   id="${navLinkId}"
+                                   onclick="smoothScrollToBubble(event, '${messageId}', '${navLinkId}')" 
+                                   class="block p-2 rounded-lg text-sm text-gray-300 hover:bg-indigo-700 hover:text-white transition duration-200 truncate"
+                                   title="${tempDiv.textContent.substring(0, 100)}...">
+                                    ${navTitle}
+                                </a>
+                            `;
+
+                            // 2. 创建玩家气泡 (右侧) - 添加 onclick 事件
+                            historyHtml += `
+                                <div id="${messageId}" class="flex justify-end pt-2 history-message-wrapper cursor-pointer" onclick="syncNavToBubble('${messageId}', '${navLinkId}')">
+                                    <div class="bg-indigo-700 text-indigo-100 p-4 rounded-lg shadow-md max-w-lg md:max-w-2xl">
+                                        <div class="text-sm md:text-base leading-relaxed">${safeContent}</div>
+                                        <div class="text-xs text-indigo-300 mt-2 text-right font-medium">玩家 (User)</div>
+                                    </div>
+                                </div>
+                            `;
+                        } else if (message.role === 'assistant') {
+                            // 2. 创建GM/AI气泡 (左侧) - 保持不变
+                            historyHtml += `
+                                <div id="${messageId}" class="flex justify-start pt-2 history-message-wrapper">
+                                    <div class="bg-gray-700 text-gray-200 p-4 rounded-lg shadow-md max-w-lg md:max-w-2xl">
+                                        <div class="text-sm md:text-base leading-relaxed">${safeContent}</div>
+                                        <div class="text-xs text-gray-400 mt-2 text-left font-medium">GM (Assistant)</div>
+                                    </div>
+                                </div>
+                            `;
+                        }
+                    }
+                });
+                historyNav.innerHTML = navHtml;
+                historyContainer.innerHTML = historyHtml;
+            } else {
+                historyNav.innerHTML = '<p class="text-gray-400 text-center text-sm">未找到 "history" 数组。</p>';
+                historyContainer.innerHTML = '<p class="text-gray-400 text-center">未在JSON文件中找到 "history" 数组。';
+            }
+
+            // 默认切换到第一个tab
+            tabSetting.click();
+        }
+
+    </script>
+</body>
+</html>
