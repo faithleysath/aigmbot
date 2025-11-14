@@ -123,7 +123,7 @@ TRANSCRIPTION_SYSTEM_PROMPT = """
 
 async def process_single_chapter(client: AsyncOpenAI, semaphore: asyncio.Semaphore, history: list[dict], turn_number: int, output_dir: str, model: str) -> bool:
     """处理单个回合的转写，包括API请求和文件保存"""
-    output_path = os.path.join(output_dir, f"{turn_number}.md")
+    output_path = os.path.join(output_dir, f"{turn_number}.txt")
     if os.path.exists(output_path):
         print(f"🟡 第 {turn_number} 章文件已存在，跳过。")
         return True
@@ -161,9 +161,18 @@ async def process_single_chapter(client: AsyncOpenAI, semaphore: asyncio.Semapho
 
 def prepare_turn_data(history: list[dict], turn_number: int) -> dict[str, Any]:
     """为指定回合准备符合 prompt 格式的数据"""
+    # 边界检查
+    total_turns = len(history) // 2
+    if turn_number < 1 or turn_number > total_turns:
+        raise ValueError(f"turn_number {turn_number} 超出范围 [1, {total_turns}]")
+    
     # 回合数从1开始，列表索引从0开始
     # 第 N 回合对应 history 列表中的 (N-1)*2 和 (N-1)*2 + 1 索引
     current_turn_index = (turn_number - 1) * 2
+    
+    # 确保索引有效（双重保险）
+    if current_turn_index + 1 >= len(history):
+        raise ValueError(f"history 数据不完整，无法获取第 {turn_number} 回合")
     
     user_content = history[current_turn_index]["content"]
     assistant_content = history[current_turn_index + 1]["content"]
@@ -188,6 +197,8 @@ def prepare_turn_data(history: list[dict], turn_number: int) -> dict[str, Any]:
 
 async def process_all_chapters(history: list[dict], turn_range: tuple[int, int], output_dir: str, concurrency_limit: int, model: str, base_url: str | None):
     """并发处理所有指定的章节"""
+    from tqdm.asyncio import tqdm_asyncio
+    
     try:
         client = AsyncOpenAI(base_url=base_url)
         # 简单测试一下API Key是否有效
@@ -212,8 +223,14 @@ async def process_all_chapters(history: list[dict], turn_range: tuple[int, int],
             model=model
         ))
         tasks.append(task)
-        
-    results = await asyncio.gather(*tasks)
+    
+    print(f"\n📊 开始处理 {len(tasks)} 个章节...")
+    results = await tqdm_asyncio.gather(
+        *tasks,
+        desc="转写进度",
+        total=len(tasks),
+        unit="章"
+    )
     
     success_count = sum(1 for r in results if r)
     fail_count = len(results) - success_count
@@ -324,11 +341,12 @@ if __name__ == "__main__":
     # 提示用户需要安装的库
     try:
         import openai  # noqa: F401
+        from tqdm.asyncio import tqdm_asyncio  # noqa: F401
     except ImportError:
         print("="*50)
         print("⚠️  检测到依赖库缺失！")
         print("请先运行以下命令安装所需库:")
-        print("   pip install openai")
+        print("   pip install openai tqdm")
         print("="*50)
         exit(1)
     
