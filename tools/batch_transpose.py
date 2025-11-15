@@ -5,8 +5,12 @@ import os
 import json
 import argparse
 import asyncio
+from datetime import datetime
 from openai import AsyncOpenAI
 from typing import Any
+
+# 全局锁，用于保护 usage 日志文件的并发写入
+usage_log_lock = asyncio.Lock()
 
 # --- 核心转写规则 Prompt ---
 TRANSCRIPTION_SYSTEM_PROMPT = """
@@ -134,7 +138,42 @@ TRANSCRIPTION_SYSTEM_PROMPT = """
 请严格遵循以上所有规则，开始你的转写工作。
 """
 
-async def process_single_chapter(client: AsyncOpenAI, semaphore: asyncio.Semaphore, history: list[dict], turn_number: int, output_dir: str, model: str, max_retries: int = 3) -> bool:
+async def log_usage(usage_log_path: str, turn_number: int, model: str, input_tokens: int, output_tokens: int, total_tokens: int, success: bool) -> None:
+    """异步安全地记录token使用情况到JSON文件"""
+    async with usage_log_lock:
+        try:
+            # 读取现有日志
+            if os.path.exists(usage_log_path):
+                with open(usage_log_path, 'r', encoding='utf-8') as f:
+                    try:
+                        usage_data = json.load(f)
+                        if not isinstance(usage_data, list):
+                            usage_data = []
+                    except json.JSONDecodeError:
+                        usage_data = []
+            else:
+                usage_data = []
+            
+            # 添加新记录
+            record = {
+                "timestamp": datetime.now().astimezone().isoformat(),
+                "turn_number": turn_number,
+                "model": model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
+                "success": success
+            }
+            usage_data.append(record)
+            
+            # 写回文件
+            with open(usage_log_path, 'w', encoding='utf-8') as f:
+                json.dump(usage_data, f, ensure_ascii=False, indent=2)
+                
+        except Exception as e:
+            print(f"⚠️ 记录 usage 失败 (第 {turn_number} 章): {e}")
+
+async def process_single_chapter(client: AsyncOpenAI, semaphore: asyncio.Semaphore, history: list[dict], turn_number: int, output_dir: str, model: str, usage_log_path: str, max_retries: int = 3) -> bool:
     """处理单个回合的转写，包括API请求和文件保存"""
     output_path = os.path.join(output_dir, f"{turn_number}.txt")
     if os.path.exists(output_path):
@@ -177,13 +216,40 @@ async def process_single_chapter(client: AsyncOpenAI, semaphore: asyncio.Semapho
                         continue
                     else:
                         print(f"❌ 第 {turn_number} 章生成失败：API 多次返回空内容。")
+                        # 记录失败的usage
+                        await log_usage(
+                            usage_log_path=usage_log_path,
+                            turn_number=turn_number,
+                            model=model,
+                            input_tokens=0,
+                            output_tokens=0,
+                            total_tokens=0,
+                            success=False
+                        )
                         return False
+
+                # 提取token使用信息
+                usage = response.usage
+                input_tokens = usage.prompt_tokens if usage else 0
+                output_tokens = usage.completion_tokens if usage else 0
+                total_tokens = usage.total_tokens if usage else 0
 
                 # 保存文件
                 with open(output_path, 'w', encoding='utf-8') as f:
                     f.write(content)
                 
-                print(f"✅ 第 {turn_number} 章生成成功 -> {output_path}")
+                # 记录成功的usage
+                await log_usage(
+                    usage_log_path=usage_log_path,
+                    turn_number=turn_number,
+                    model=model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=total_tokens,
+                    success=True
+                )
+                
+                print(f"✅ 第 {turn_number} 章生成成功 -> {output_path} (tokens: {total_tokens})")
                 return True
 
             except IndexError as e:
@@ -242,7 +308,7 @@ def prepare_turn_data(history: list[dict], turn_number: int) -> dict[str, Any]:
         "context_turns_after": context_turns_after
     }
 
-async def process_all_chapters(history: list[dict], turn_range: tuple[int, int], output_dir: str, concurrency_limit: int, model: str, base_url: str | None):
+async def process_all_chapters(history: list[dict], turn_range: tuple[int, int], output_dir: str, concurrency_limit: int, model: str, base_url: str | None, usage_log_path: str):
     """并发处理所有指定的章节"""
     from tqdm.asyncio import tqdm_asyncio
     
@@ -267,7 +333,8 @@ async def process_all_chapters(history: list[dict], turn_range: tuple[int, int],
             history=history,
             turn_number=turn_number,
             output_dir=output_dir,
-            model=model
+            model=model,
+            usage_log_path=usage_log_path
         ))
         tasks.append(task)
     
@@ -287,6 +354,7 @@ async def process_all_chapters(history: list[dict], turn_range: tuple[int, int],
     if fail_count > 0:
         print(f"❌ 失败: {fail_count} 章")
     print(f"所有文件已保存到 '{output_dir}' 目录。")
+    print(f"📊 Token使用记录已保存到 '{usage_log_path}'")
 
 def get_user_range(total_turns: int) -> tuple[int, int] | None:
     """获取用户输入的回合范围"""
@@ -325,6 +393,7 @@ def main():
     parser.add_argument("-c", "--concurrency", type=int, default=5, help="并发请求 OpenAI API 的最大数量 (默认: 5)。")
     parser.add_argument("--model", type=str, default="gpt-4o", help="指定使用的模型 (默认: 'gpt-4o')。")
     parser.add_argument("--base-url", type=str, default=None, help="指定 OpenAI API 的 base_url (可选)。")
+    parser.add_argument("--usage-log", type=str, default="outputs/usage_log.json", help="Token使用记录的JSON文件路径 (默认: 'outputs/usage_log.json')。")
     
     args = parser.parse_args()
 
@@ -374,6 +443,11 @@ def main():
     # 创建输出目录
     os.makedirs(args.output_dir, exist_ok=True)
     
+    # 确保usage_log的目录存在
+    usage_log_dir = os.path.dirname(args.usage_log)
+    if usage_log_dir:
+        os.makedirs(usage_log_dir, exist_ok=True)
+    
     # 运行异步处理
     asyncio.run(process_all_chapters(
         history=history,
@@ -381,7 +455,8 @@ def main():
         output_dir=args.output_dir,
         concurrency_limit=args.concurrency,
         model=args.model,
-        base_url=args.base_url
+        base_url=args.base_url,
+        usage_log_path=args.usage_log
     ))
 
 if __name__ == "__main__":
