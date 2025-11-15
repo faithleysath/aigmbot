@@ -156,6 +156,7 @@ async def process_single_chapter(client: AsyncOpenAI, semaphore: asyncio.Semapho
                         {"role": "user", "content": json.dumps(request_data, ensure_ascii=False, indent=2)}
                     ],
                     temperature=0,
+                    top_p=1,
                 )
                 
                 # 检查响应是否有效
