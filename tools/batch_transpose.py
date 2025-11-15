@@ -134,7 +134,7 @@ TRANSCRIPTION_SYSTEM_PROMPT = """
 请严格遵循以上所有规则，开始你的转写工作。
 """
 
-async def process_single_chapter(client: AsyncOpenAI, semaphore: asyncio.Semaphore, history: list[dict], turn_number: int, output_dir: str, model: str) -> bool:
+async def process_single_chapter(client: AsyncOpenAI, semaphore: asyncio.Semaphore, history: list[dict], turn_number: int, output_dir: str, model: str, max_retries: int = 3) -> bool:
     """处理单个回合的转写，包括API请求和文件保存"""
     output_path = os.path.join(output_dir, f"{turn_number}.txt")
     if os.path.exists(output_path):
@@ -143,34 +143,67 @@ async def process_single_chapter(client: AsyncOpenAI, semaphore: asyncio.Semapho
 
     async with semaphore:
         print(f"⏳ 开始生成第 {turn_number} 章...")
-        try:
-            # 准备请求数据
-            request_data = prepare_turn_data(history, turn_number)
-            
-            response = await client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": TRANSCRIPTION_SYSTEM_PROMPT},
-                    {"role": "user", "content": json.dumps(request_data, ensure_ascii=False, indent=2)}
-                ],
-                temperature=0,
-            )
-            
-            content = response.choices[0].message.content
-            if not content:
-                print(f"❌ 第 {turn_number} 章生成失败：API 返回内容为空。")
-                return False
+        
+        for attempt in range(max_retries):
+            try:
+                # 准备请求数据
+                request_data = prepare_turn_data(history, turn_number)
+                
+                response = await client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": TRANSCRIPTION_SYSTEM_PROMPT},
+                        {"role": "user", "content": json.dumps(request_data, ensure_ascii=False, indent=2)}
+                    ],
+                    temperature=0,
+                )
+                
+                # 检查响应是否有效
+                if not response.choices or len(response.choices) == 0:
+                    print(f"⚠️ 第 {turn_number} 章: API 返回的 choices 为空 (尝试 {attempt + 1}/{max_retries})")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2)  # 等待2秒后重试
+                        continue
+                    else:
+                        print(f"❌ 第 {turn_number} 章生成失败：API 多次返回空响应。")
+                        return False
+                
+                content = response.choices[0].message.content
+                if not content:
+                    print(f"⚠️ 第 {turn_number} 章: API 返回内容为空 (尝试 {attempt + 1}/{max_retries})")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2)  # 等待2秒后重试
+                        continue
+                    else:
+                        print(f"❌ 第 {turn_number} 章生成失败：API 多次返回空内容。")
+                        return False
 
-            # 保存文件
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-            
-            print(f"✅ 第 {turn_number} 章生成成功 -> {output_path}")
-            return True
+                # 保存文件
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                
+                print(f"✅ 第 {turn_number} 章生成成功 -> {output_path}")
+                return True
 
-        except Exception as e:
-            print(f"❌ 第 {turn_number} 章生成失败: {e}")
-            return False
+            except IndexError as e:
+                print(f"⚠️ 第 {turn_number} 章: 索引越界错误 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2)
+                    continue
+                else:
+                    print(f"❌ 第 {turn_number} 章生成失败：{e}")
+                    return False
+            except Exception as e:
+                print(f"⚠️ 第 {turn_number} 章发生错误 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2)
+                    continue
+                else:
+                    print(f"❌ 第 {turn_number} 章生成失败：{e}")
+                    return False
+        
+        # 理论上不会到这里，但为了安全起见
+        return False
 
 def prepare_turn_data(history: list[dict], turn_number: int) -> dict[str, Any]:
     """为指定回合准备符合 prompt 格式的数据"""
