@@ -98,8 +98,9 @@ TRANSCRIPTION_SYSTEM_PROMPT = """
       * user_content: "这一段好精彩啊！"
       * assistant_content: "受宠若惊！"
       * **转写为：**
-      * 【**来自次元之外的声音（玩家）：** 这一段好精彩啊！】
-      * 【**来自‘小镜’的回应：** 受宠若惊！(*/ω*)】
+      * 【**来自次元之外的声音（创作者）：** 这一段好精彩啊！】
+      * 然后先写系统或小镜的回应
+      * 接着用----分割线，回到正常叙事。
 * **模式D：【‘内化’模式（默认模式 -> 正常转写）】**
   * **触发条件：** 所有**未被**以上【A】、【B】、【C】三种模式捕获的 user_content。
   * **适用范围：**
@@ -152,7 +153,7 @@ async def process_single_chapter(client: AsyncOpenAI, semaphore: asyncio.Semapho
                     {"role": "system", "content": TRANSCRIPTION_SYSTEM_PROMPT},
                     {"role": "user", "content": json.dumps(request_data, ensure_ascii=False, indent=2)}
                 ],
-                temperature=0.7,
+                temperature=0,
             )
             
             content = response.choices[0].message.content
