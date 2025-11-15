@@ -20,14 +20,14 @@ TRANSCRIPTION_SYSTEM_PROMPT = """
 **输入格式（JSON）：**
 {
   "context_turns_before": [
-    // 前5轮的对话，{ "role": "user", "content": "..." }, { "role": "assistant", "content": "..." }
+    // 前7轮的对话，{ "role": "user", "content": "..." }, { "role": "assistant", "content": "..." }
   ],
   "current_turn": {
     "user_content": "玩家的本轮输入，例如：'选择选项A'",
     "assistant_content": "GM的本轮输出，包含叙事、弹幕、选项列表等。"
   },
   "context_turns_after": [
-    // 后5轮的对话，{ "role": "user", "content": "..." }, { "role": "assistant", "content": "..." }
+    // 后3轮的对话，{ "role": "user", "content": "..." }, { "role": "assistant", "content": "..." }
   ]
 }
 
@@ -290,13 +290,13 @@ def prepare_turn_data(history: list[dict], turn_number: int) -> dict[str, Any]:
     user_content = history[current_turn_index]["content"]
     assistant_content = history[current_turn_index + 1]["content"]
 
-    # 上下文：往前取5个回合（10条消息）
-    context_before_start = max(0, current_turn_index - 10)
+    # 上下文：往前取7个回合（14条消息）
+    context_before_start = max(0, current_turn_index - 14)
     context_turns_before = history[context_before_start:current_turn_index]
 
-    # 上下文：往后取5个回合（10条消息）
+    # 上下文：往后取3个回合（6条消息）
     context_after_start = current_turn_index + 2
-    context_after_end = context_after_start + 10
+    context_after_end = context_after_start + 6
     context_turns_after = history[context_after_start:context_after_end]
 
     return {
