@@ -1,0 +1,272 @@
+[
+  {
+    "timestamp": "2025-11-17T02:28:48.497860+08:00",
+    "turn_number": 154,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 21249,
+    "output_tokens": 3171,
+    "total_tokens": 24420,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:28:49.083152+08:00",
+    "turn_number": 152,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 20366,
+    "output_tokens": 3364,
+    "total_tokens": 23730,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:28:49.581061+08:00",
+    "turn_number": 151,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 20424,
+    "output_tokens": 3244,
+    "total_tokens": 23668,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:28:55.046088+08:00",
+    "turn_number": 155,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 21046,
+    "output_tokens": 3952,
+    "total_tokens": 24998,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:28:59.115966+08:00",
+    "turn_number": 153,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 20471,
+    "output_tokens": 3012,
+    "total_tokens": 23483,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:29:16.878579+08:00",
+    "turn_number": 158,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 20932,
+    "output_tokens": 2742,
+    "total_tokens": 23674,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:29:18.674517+08:00",
+    "turn_number": 156,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 21228,
+    "output_tokens": 2985,
+    "total_tokens": 24213,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:29:26.204382+08:00",
+    "turn_number": 160,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 21168,
+    "output_tokens": 2480,
+    "total_tokens": 23648,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:29:26.209907+08:00",
+    "turn_number": 157,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 21323,
+    "output_tokens": 3347,
+    "total_tokens": 24670,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:29:28.243436+08:00",
+    "turn_number": 159,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 21020,
+    "output_tokens": 3005,
+    "total_tokens": 24025,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:29:50.173253+08:00",
+    "turn_number": 161,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 21143,
+    "output_tokens": 3821,
+    "total_tokens": 24964,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:29:50.795473+08:00",
+    "turn_number": 162,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 22050,
+    "output_tokens": 3106,
+    "total_tokens": 25156,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:29:51.237709+08:00",
+    "turn_number": 164,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 21259,
+    "output_tokens": 2622,
+    "total_tokens": 23881,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:30:05.151361+08:00",
+    "turn_number": 163,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 22135,
+    "output_tokens": 3272,
+    "total_tokens": 25407,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:30:05.897852+08:00",
+    "turn_number": 165,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 19737,
+    "output_tokens": 4154,
+    "total_tokens": 23891,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:30:16.016320+08:00",
+    "turn_number": 168,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 19089,
+    "output_tokens": 2136,
+    "total_tokens": 21225,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:30:21.414050+08:00",
+    "turn_number": 167,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 18699,
+    "output_tokens": 2616,
+    "total_tokens": 21315,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:30:27.457484+08:00",
+    "turn_number": 166,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 19811,
+    "output_tokens": 3670,
+    "total_tokens": 23481,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:30:41.730581+08:00",
+    "turn_number": 169,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 17552,
+    "output_tokens": 2768,
+    "total_tokens": 20320,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:30:49.073559+08:00",
+    "turn_number": 170,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 17225,
+    "output_tokens": 1855,
+    "total_tokens": 19080,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:30:50.972613+08:00",
+    "turn_number": 172,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 17145,
+    "output_tokens": 2473,
+    "total_tokens": 19618,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:30:53.752225+08:00",
+    "turn_number": 171,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 16982,
+    "output_tokens": 3942,
+    "total_tokens": 20924,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:31:05.349445+08:00",
+    "turn_number": 173,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 16989,
+    "output_tokens": 3357,
+    "total_tokens": 20346,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:31:08.059570+08:00",
+    "turn_number": 174,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 17569,
+    "output_tokens": 2957,
+    "total_tokens": 20526,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:31:19.517115+08:00",
+    "turn_number": 175,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 17998,
+    "output_tokens": 3187,
+    "total_tokens": 21185,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:31:26.217704+08:00",
+    "turn_number": 176,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 18733,
+    "output_tokens": 3484,
+    "total_tokens": 22217,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:31:29.810165+08:00",
+    "turn_number": 177,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 19011,
+    "output_tokens": 4041,
+    "total_tokens": 23052,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:31:32.864279+08:00",
+    "turn_number": 178,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 19912,
+    "output_tokens": 2588,
+    "total_tokens": 22500,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:31:46.332381+08:00",
+    "turn_number": 179,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 20372,
+    "output_tokens": 3228,
+    "total_tokens": 23600,
+    "success": true
+  },
+  {
+    "timestamp": "2025-11-17T02:31:47.408144+08:00",
+    "turn_number": 180,
+    "model": "google/gemini-2.5-pro",
+    "input_tokens": 21807,
+    "output_tokens": 3089,
+    "total_tokens": 24896,
+    "success": true
+  }
+]
