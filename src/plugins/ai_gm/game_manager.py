@@ -56,12 +56,17 @@ class GameManager:
             game_id = await self.db.create_game(group_id, user_id, system_prompt)
             LOG.info(f"群 {group_id} 创建了新游戏，ID: {game_id}")
 
+            # 3. 检查是否启用高级模式
+            is_advanced_mode = False
+            if self.channel_config:
+                is_advanced_mode = await self.channel_config.is_advanced_mode_enabled(str(group_id))
+
             # 2. 调用 LLM 获取开场白
             await self.api.post_group_msg(
                 group_id, text="🚀 新游戏即将开始... 正在联系 GM 生成开场白..."
             )
             initial_messages: list[ChatCompletionMessageParam] = [
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": (NSFW_PROMPT if is_advanced_mode else "") + system_prompt},
                 {"role": "user", "content": "开始"},
             ]
             assistant_response, usage, model_name = await self.llm_api.get_completion(
