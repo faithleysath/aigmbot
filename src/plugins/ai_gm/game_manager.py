@@ -9,7 +9,7 @@ from .utils import EMOJI, bytes_to_base64
 from .cache import CacheManager
 from .content_fetcher import ContentFetcher
 from .exceptions import TipChangedError, GameFrozenError
-from .constants import MAX_HISTORY_ROUNDS
+from .constants import MAX_HISTORY_ROUNDS, NSFW_PROMPT
 from .channel_config import ChannelConfigManager
 
 LOG = get_log(__name__)
@@ -233,7 +233,7 @@ class GameManager:
                 )
 
     async def _build_llm_history(
-        self, system_prompt: str, tip_round_id: int
+        self, system_prompt: str, tip_round_id: int, nsfw_mode: bool = False
     ) -> list[ChatCompletionMessageParam] | None:
         """
         从数据库构建用于 LLM 的对话历史。
@@ -258,7 +258,7 @@ class GameManager:
         
         # 构建消息列表（rounds 已经按时间正序排列：从最早到最新）
         messages: list[ChatCompletionMessageParam] = [
-            {"role": "system", "content": system_prompt}
+            {"role": "system", "content": (NSFW_PROMPT if nsfw_mode else "") + system_prompt}
         ]
         
         for round_data in rounds:
@@ -267,7 +267,7 @@ class GameManager:
         
         return messages
 
-    async def tally_and_advance(self, game_id: int, scores: dict, result_lines: list[str]):
+    async def tally_and_advance(self, game_id: int, scores: dict, result_lines: list[str], nsfw_mode: bool = False):
         """
         根据投票结果计票，并推进游戏到下一回合。
         
@@ -341,7 +341,7 @@ class GameManager:
             )
 
             # 4. 构建历史
-            messages = await self._build_llm_history(system_prompt, initial_tip_round_id)
+            messages = await self._build_llm_history(system_prompt, initial_tip_round_id, nsfw_mode)
             if not messages:
                 await self.api.post_group_msg(channel_id, text="构建对话历史失败，游戏中断。")
                 return

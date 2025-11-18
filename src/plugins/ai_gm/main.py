@@ -166,6 +166,7 @@ class AIGMPlugin(NcatBotPlugin):
                 self.renderer,
                 content_fetcher,
                 self.command_handler,
+                channel_config=self.channel_config,
             )
         else:
             LOG.error(f"[{self.name}] 部分组件初始化失败，插件功能可能不完整。")

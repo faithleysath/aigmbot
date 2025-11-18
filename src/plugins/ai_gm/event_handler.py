@@ -14,6 +14,7 @@ from .renderer import MarkdownRenderer
 from .utils import EMOJI, bytes_to_base64
 from .content_fetcher import ContentFetcher
 from .commands import CommandHandler
+from .channel_config import ChannelConfigManager
 
 LOG = get_log(__name__)
 
@@ -28,6 +29,7 @@ class EventHandler:
         renderer: MarkdownRenderer,
         content_fetcher: ContentFetcher,
         command_handler: CommandHandler,
+        channel_config: ChannelConfigManager
     ):
         self.plugin = plugin
         self.api = plugin.api
@@ -38,6 +40,7 @@ class EventHandler:
         self.config = plugin.config
         self.content_fetcher = content_fetcher
         self.command_handler = command_handler
+        self.channel_config = channel_config
 
     async def handle_group_message(self, event: GroupMessageEvent):
         """处理群聊消息，包括文件上传启动和自定义输入"""
@@ -270,7 +273,7 @@ class EventHandler:
             return
 
         if emoji_id == str(EMOJI["CONFIRM"]):
-            await self._tally_and_advance(game_id)
+            await self._tally_and_advance(game_id, channel_id = group_id)
         elif emoji_id == str(EMOJI["DENY"]):
             _, result_lines = await self._tally_votes(
                 group_id, main_message_id, game["candidate_custom_input_ids"]
@@ -448,8 +451,12 @@ class EventHandler:
 
         return scores, result_lines
 
-    async def _tally_and_advance(self, game_id: int):
+    async def _tally_and_advance(self, game_id: int, channel_id: str):
         """计票并推进游戏到下一回合"""
+        # 3. 检查是否启用高级模式
+        is_advanced_mode = False
+        if self.channel_config:
+            is_advanced_mode = await self.channel_config.is_advanced_mode_enabled(str(channel_id))
         game = await self.db.get_game_by_game_id(game_id)
         if not game:
             return
@@ -462,4 +469,4 @@ class EventHandler:
             group_id, main_message_id, candidate_ids_json
         )
 
-        await self.game_manager.tally_and_advance(game_id, scores, result_lines)
+        await self.game_manager.tally_and_advance(game_id, scores, result_lines, nsfw_mode=is_advanced_mode)
