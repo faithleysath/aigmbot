@@ -10,6 +10,7 @@ from .cache import CacheManager
 from .content_fetcher import ContentFetcher
 from .exceptions import TipChangedError, GameFrozenError
 from .constants import MAX_HISTORY_ROUNDS
+from .channel_config import ChannelConfigManager
 
 LOG = get_log(__name__)
 
@@ -23,6 +24,7 @@ class GameManager:
         renderer: MarkdownRenderer,
         cache_manager: CacheManager,
         content_fetcher: ContentFetcher,
+        channel_config: ChannelConfigManager = None,
     ):
         self.plugin = plugin
         self.api = plugin.api
@@ -31,6 +33,7 @@ class GameManager:
         self.renderer = renderer
         self.cache_manager = cache_manager
         self.content_fetcher = content_fetcher
+        self.channel_config = channel_config
 
     async def start_new_game(self, group_id: str, user_id: str, system_prompt: str):
         """
@@ -99,12 +102,12 @@ class GameManager:
         """
         检出并显示游戏的HEAD分支的最新状态。
 
-        这包括渲染最新回合的内容作为图片，发送到频道，并更新主消息ID。
+        根据频道配置，可以选择渲染最新回合的内容作为图片，或发送 Web UI 链接。
 
         Args:
             game_id: 要检出的游戏ID。
         """
-        if not self.db or not self.db.conn or not self.renderer or not self.cache_manager:
+        if not self.db or not self.db.conn or not self.cache_manager:
             LOG.error(f"检出 head 失败：组件未初始化。")
             return
 
@@ -140,24 +143,65 @@ class GameManager:
                 except (json.JSONDecodeError, TypeError):
                     LOG.warning(f"无法解析 llm_usage: {llm_usage_str}")
 
-            # 3. 渲染并发送图片
-            image_bytes = await self.renderer.render_markdown(
-                assistant_response, extra_text=extra_text
-            )
-            if not image_bytes:
-                raise Exception("渲染剧情图片失败。")
+            # 3. 检查是否启用高级模式
+            is_advanced_mode = False
+            if self.channel_config:
+                is_advanced_mode = await self.channel_config.is_advanced_mode_enabled(str(channel_id))
 
-            main_message_id = await self.api.post_group_file(
-                channel_id,
-                image=f"data:image/png;base64,{bytes_to_base64(image_bytes)}",
-            )
-            if not main_message_id:
-                raise Exception("发送剧情图片失败。")
+            main_message_id = None
 
-            # 4. 更新数据库
+            if is_advanced_mode:
+                # 4a. 高级模式：发送 Web UI 链接
+                if not hasattr(self.plugin, 'web_ui') or not self.plugin.web_ui:
+                    raise Exception("高级模式需要 Web UI 组件，但该组件未启用。")
+
+                web_ui = self.plugin.web_ui
+                if not web_ui.tunnel_url:
+                    raise Exception("Web UI tunnel 未就绪，无法生成链接。")
+
+                # 生成回合详情链接
+                round_url = f"{web_ui.tunnel_url}/game/{game_id}/round/{tip_round_id}"
+
+                # 构建消息文本
+                link_message = (
+                    f"🎭 **剧情更新**\n\n"
+                    f"📖 **回合 {tip_round_id}**\n\n"
+                    f"🔗 **查看完整剧情：{round_url}**\n\n"
+                    f"💡 使用下方表情进行选择或输入自定义选项"
+                )
+
+                # 发送文本消息并获取消息ID
+                message_data = await self.api.post_group_msg(str(channel_id), text=link_message)
+                if message_data and "message_id" in message_data:
+                    main_message_id = message_data["message_id"]
+                elif isinstance(message_data, str):
+                    main_message_id = message_data
+
+                if not main_message_id:
+                    raise Exception("发送剧情链接失败。")
+
+            else:
+                # 4b. 普通模式：渲染并发送图片
+                if not self.renderer:
+                    raise Exception("渲染器未初始化。")
+
+                image_bytes = await self.renderer.render_markdown(
+                    assistant_response, extra_text=extra_text
+                )
+                if not image_bytes:
+                    raise Exception("渲染剧情图片失败。")
+
+                main_message_id = await self.api.post_group_file(
+                    channel_id,
+                    image=f"data:image/png;base64,{bytes_to_base64(image_bytes)}",
+                )
+                if not main_message_id:
+                    raise Exception("发送剧情图片失败。")
+
+            # 5. 更新数据库
             await self.db.update_game_main_message(game_id, main_message_id)
 
-            # 5. 添加表情回应
+            # 6. 添加表情回应
             emoji_list = [
                 EMOJI["A"],
                 EMOJI["B"],
@@ -178,7 +222,8 @@ class GameManager:
                 except Exception as e:
                     LOG.warning(f"为消息 {main_message_id} 贴表情 {emoji_id} 失败: {e}")
 
-            LOG.info(f"游戏 {game_id} 已成功检出 head，主消息 ID: {main_message_id}")
+            mode_text = "高级模式(链接)" if is_advanced_mode else "普通模式(图片)"
+            LOG.info(f"游戏 {game_id} 已成功检出 head ({mode_text})，主消息 ID: {main_message_id}")
 
         except Exception as e:
             LOG.error(f"检出 head (game_id: {game_id}) 时出错: {e}", exc_info=True)

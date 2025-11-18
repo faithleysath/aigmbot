@@ -16,6 +16,7 @@ from .renderer import MarkdownRenderer
 from .utils import bytes_to_base64
 from .constants import HISTORY_MAX_LIMIT
 from .web_ui import WebUI
+from .channel_config import ChannelConfigManager
 
 LOG = get_log(__name__)
 
@@ -30,6 +31,7 @@ class CommandHandler:
         visualizer: Visualizer,
         renderer: MarkdownRenderer,
         web_ui: WebUI | None = None,
+        channel_config: ChannelConfigManager | None = None,
     ):
         self.plugin = plugin
         self.web_ui = web_ui
@@ -40,6 +42,7 @@ class CommandHandler:
         self.visualizer = visualizer
         self.renderer = renderer
         self.rbac_manager = plugin.rbac_manager
+        self.channel_config = channel_config
 
     async def _validate_name(self, name: str) -> bool:
         """验证分支或标签名称的格式"""
@@ -818,3 +821,65 @@ class CommandHandler:
         
         self.renderer.clear_help_cache()
         await event.reply("✅ 已成功清除帮助图片缓存。", at=False)
+
+    async def handle_advanced_mode(self, event: GroupMessageEvent, action: str):
+        """处理 /aigm advanced-mode <enable|disable|status> 命令"""
+        user_id = str(event.user_id)
+        group_id = str(event.group_id)
+
+        # 权限检查：只有群管理员、root用户或游戏主持人可以操作
+        if not await self.check_channel_permission(user_id, group_id, event.sender.role):
+            await event.reply("权限不足。您必须是群管理员、root用户或该频道游戏的主持人。", at=False)
+            return
+
+        if not self.channel_config:
+            await event.reply("❌ 频道配置管理器未初始化。", at=False)
+            return
+
+        if action == "enable":
+            # 启用高级模式
+            success = await self.channel_config.enable_advanced_mode(group_id, user_id)
+            if success:
+                await event.reply(
+                    "✅ 已为本频道启用高级模式。\n"
+                    "📌 在此模式下，AI GM 将发送 Web UI 链接而非渲染图片，但表情功能保持正常。",
+                    at=False
+                )
+            else:
+                await event.reply("❌ 启用高级模式失败，请检查日志。", at=False)
+
+        elif action == "disable":
+            # 禁用高级模式
+            success = await self.channel_config.disable_advanced_mode(group_id)
+            if success:
+                await event.reply("✅ 已为本频道禁用高级模式，将恢复发送渲染图片。", at=False)
+            else:
+                await event.reply("❌ 禁用高级模式失败，请检查日志。", at=False)
+
+        elif action == "status":
+            # 查看状态
+            is_enabled = await self.channel_config.is_advanced_mode_enabled(group_id)
+            config = await self.channel_config.get_channel_config(group_id)
+
+            if is_enabled:
+                enabled_at = config.get("enabled_at", "未知时间")
+                enabled_by = config.get("enabled_by", "未知用户")
+                status_msg = (
+                    f"🔧 当前频道状态：高级模式已启用\n"
+                    f"👤 启用者：{enabled_by}\n"
+                    f"⏰ 启用时间：{enabled_at}\n"
+                    f"📱 AI GM 将发送 Web UI 链接而非图片"
+                )
+            else:
+                status_msg = "🔧 当前频道状态：高级模式未启用\n📱 AI GM 将发送渲染图片"
+
+            await event.reply(status_msg, at=False)
+
+        else:
+            await event.reply(
+                "❌ 无效的操作。请使用：/aigm advanced-mode <enable|disable|status>\n"
+                "• enable - 启用高级模式\n"
+                "• disable - 禁用高级模式\n"
+                "• status - 查看当前状态",
+                at=False
+            )

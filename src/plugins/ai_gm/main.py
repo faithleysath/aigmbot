@@ -19,6 +19,7 @@ from .content_fetcher import ContentFetcher
 from .commands import CommandHandler
 from .visualizer import Visualizer
 from .web_ui import WebUI
+from .channel_config import ChannelConfigManager
 import asyncio
 
 LOG = get_log(__name__)
@@ -41,6 +42,7 @@ class AIGMPlugin(NcatBotPlugin):
         self.command_handler: CommandHandler | None = None
         self.visualizer: Visualizer | None = None
         self.web_ui: WebUI | None = None
+        self.channel_config: ChannelConfigManager | None = None
         self.data_path: Path = Path()
 
     async def on_load(self):
@@ -102,6 +104,10 @@ class AIGMPlugin(NcatBotPlugin):
         self.cache_manager = CacheManager(cache_path)
         await self.cache_manager.load_from_disk()
 
+        # 6. 初始化频道配置管理器
+        self.channel_config = ChannelConfigManager(data_dir)
+        LOG.debug(f"[{self.name}] 频道配置管理器初始化完成。")
+
         if self.db and self.llm_api and self.renderer and self.cache_manager:
             self.web_ui = WebUI(self.db, data_dir)
             
@@ -140,6 +146,7 @@ class AIGMPlugin(NcatBotPlugin):
                 self.renderer,
                 self.cache_manager,
                 content_fetcher,
+                channel_config=self.channel_config,
             )
             self.command_handler = CommandHandler(
                 self,
@@ -149,6 +156,7 @@ class AIGMPlugin(NcatBotPlugin):
                 self.visualizer,
                 self.renderer,
                 web_ui=self.web_ui,
+                channel_config=self.channel_config,
             )
             self.event_handler = EventHandler(
                 self,
@@ -404,3 +412,8 @@ class AIGMPlugin(NcatBotPlugin):
     async def aigm_cache_pending_clear(self, event: GroupMessageEvent):
         if self.command_handler:
             await self.command_handler.handle_cache_pending_clear(event)
+
+    @aigm_group.command("advanced-mode", description="高级模式设置")
+    async def aigm_advanced_mode(self, event: GroupMessageEvent, action: str):
+        if self.command_handler:
+            await self.command_handler.handle_advanced_mode(event, action)
