@@ -9,6 +9,7 @@ from flaredantic import FlareTunnel
 
 from ncatbot.utils import get_log
 from markupsafe import Markup
+from markdown_it import MarkdownIt
 
 from .db import Database
 
@@ -20,10 +21,14 @@ class WebUI:
         self.plugin_data_path = plugin_data_path
         self.app = FastAPI(lifespan=self.lifespan)
         self.templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
-        
+
+        # 初始化 Markdown 解析器
+        self.md = MarkdownIt("commonmark", {"breaks": True}).disable("html_block").disable("html_inline")
+
         # 注册自定义 Jinja2 过滤器
         self.templates.env.filters['nl2br'] = self._nl2br
-        
+        self.templates.env.filters['markdown'] = self._markdown_to_html
+
         # Tunnel 相关属性由外部（main.py）管理
         self.tunnel: FlareTunnel | None = None
         self.tunnel_url: str | None = None
@@ -38,6 +43,13 @@ class WebUI:
         if not value:
             return value
         return Markup(str(value).replace('\n', '<br>\n'))
+
+    def _markdown_to_html(self, value):
+        """将 Markdown 转换为 HTML 的 Jinja2 过滤器"""
+        if not value:
+            return value
+        html = self.md.render(str(value))
+        return Markup(html)
 
     def _setup_routes(self):
         self.app.add_api_route("/", self.route_game_list, methods=["GET"], response_class=HTMLResponse)

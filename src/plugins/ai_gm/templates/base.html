@@ -64,6 +64,80 @@
             opacity: 0.9;
             text-decoration: none;
         }
+        /* Markdown 内容样式 */
+        .card h1, .card h2, .card h3, .card h4, .card h5, .card h6 {
+            margin-top: 1.5rem;
+            margin-bottom: 1rem;
+            font-weight: 600;
+            line-height: 1.25;
+        }
+        .card h1 { font-size: 1.8rem; }
+        .card h2 { font-size: 1.5rem; }
+        .card h3 { font-size: 1.3rem; }
+        .card h4 { font-size: 1.1rem; }
+        .card p {
+            margin-bottom: 1rem;
+        }
+        .card ul, .card ol {
+            margin-bottom: 1rem;
+            padding-left: 2rem;
+        }
+        .card li {
+            margin-bottom: 0.5rem;
+        }
+        .card blockquote {
+            border-left: 4px solid var(--primary-color);
+            padding-left: 1rem;
+            margin: 1rem 0;
+            font-style: italic;
+            color: #b0b0b0;
+        }
+        .card code {
+            background-color: #333;
+            color: #f8f8f2;
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+            font-size: 0.9rem;
+        }
+        .card pre {
+            background-color: #333;
+            padding: 1rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin-bottom: 1rem;
+        }
+        .card pre code {
+            background: none;
+            padding: 0;
+        }
+        .card table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-bottom: 1rem;
+        }
+        .card th, .card td {
+            border: 1px solid var(--border-color);
+            padding: 0.5rem;
+            text-align: left;
+        }
+        .card th {
+            background-color: #333;
+            font-weight: 600;
+        }
+        .card hr {
+            border: none;
+            border-top: 1px solid var(--border-color);
+            margin: 2rem 0;
+        }
+        .card strong, .card b {
+            font-weight: 600;
+            color: var(--secondary-color);
+        }
+        .card em, .card i {
+            font-style: italic;
+        }
+
         @media (max-width: 600px) {
             body {
                 padding: 0.5rem;
