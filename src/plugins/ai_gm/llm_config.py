@@ -396,7 +396,7 @@ class LLMConfigManager:
             # or just rely on structural typing. Here we change return type to GroupConfig.
             return self._data["group_bindings"].get(group_id, {"active": None, "fallback": None}).copy()  # type: ignore
 
-    async def test_preset(self, preset: LLMPreset, llm_api=None, timeout: int = 10) -> tuple[bool, str]:
+    async def test_preset(self, preset: LLMPreset, llm_api=None, timeout: int = 30) -> tuple[bool, str]:
         """
         测试 LLM 预设是否可用
         
