@@ -10,3 +10,4 @@ fastapi
 hypercorn
 flaredantic
 jinja2
+cryptography

@@ -226,3 +226,7 @@ config.yaml
 data/
 
 .DS_Store
+
+.secret.key
+
+llm_presets.json

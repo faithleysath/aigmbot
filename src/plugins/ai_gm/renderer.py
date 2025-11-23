@@ -49,6 +49,8 @@ class MarkdownRenderer:
         self._init_lock = asyncio.Lock()
         self._render_semaphore = asyncio.Semaphore(MAX_CONCURRENT_RENDERS)
         self._browser_failed = False  # 标记浏览器初始化是否失败
+        self._last_browser_fail_time = 0.0  # 上次浏览器初始化失败的时间
+        self._browser_retry_interval = 300.0  # 浏览器重试间隔（秒）
         self._page_count = 0  # 跟踪打开的页面数
         self._max_pages = 50  # 最大页面数限制
         self._render_timeout = 30.0  # 单次渲染超时（秒）
@@ -99,24 +101,34 @@ class MarkdownRenderer:
             
             # 重置失败标记，允许重新初始化
             self._browser_failed = False
+            self._last_browser_fail_time = 0.0
             self._page_count = 0
 
     async def _ensure_browser(self):
         """确保浏览器实例存在，使用双重检查锁定模式"""
+        import time
+        
         if self._browser:
             return self._browser
         
-        # 如果之前初始化失败，直接返回 None
+        # 如果之前初始化失败，检查是否已过重试间隔
         if self._browser_failed:
-            return None
+            if time.time() - self._last_browser_fail_time < self._browser_retry_interval:
+                return None
+            # 超过重试间隔，重置失败状态允许重试
+            LOG.info("浏览器初始化冷却时间已过，尝试重新初始化...")
+            self._browser_failed = False
         
         async with self._init_lock:
             # 双重检查：再次检查是否已被其他协程初始化
             if self._browser:
                 return self._browser
             
+            # 再次检查失败状态（可能在等待锁的过程中被其他协程设置）
             if self._browser_failed:
-                return None
+                if time.time() - self._last_browser_fail_time < self._browser_retry_interval:
+                    return None
+                self._browser_failed = False
             
             try:
                 self._p = await async_playwright().start()
@@ -132,6 +144,7 @@ class MarkdownRenderer:
             except Exception as e:
                 LOG.error(f"初始化 Playwright 浏览器失败: {e}")
                 self._browser_failed = True
+                self._last_browser_fail_time = time.time()
                 # 清理可能部分初始化的资源
                 if self._p:
                     try:
@@ -290,9 +303,11 @@ class MarkdownRenderer:
                     return None
 
             page = None
+            page_created = False
             try:
                 page = await browser.new_page()
                 self._page_count += 1
+                page_created = True
                 
                 await page.set_viewport_size({"width": RENDER_WIDTH, "height": 100})
                 await page.set_content(html_with_style, wait_until="networkidle")
@@ -312,9 +327,12 @@ class MarkdownRenderer:
                 if page:
                     try:
                         await page.close()
-                        self._page_count = max(0, self._page_count - 1)
                     except Exception as e:
                         LOG.warning(f"关闭页面时出错: {e}")
+                
+                # 无论页面关闭是否成功，只要创建了页面计数，就进行递减
+                if page_created:
+                    self._page_count = max(0, self._page_count - 1)
 
         except Exception as e:
             # 确保 Playwright 的浏览器驱动已安装
@@ -379,9 +397,11 @@ class MarkdownRenderer:
                 return None
 
         page = None
+        page_created = False
         try:
             page = await browser.new_page()
             self._page_count += 1
+            page_created = True
             
             # 从 HTML 的 body 标签中获取宽度
             width_match = re.search(r'body\s*\{[^}]*width:\s*(\d+)px;', html_content)
@@ -401,6 +421,8 @@ class MarkdownRenderer:
             if page:
                 try:
                     await page.close()
-                    self._page_count = max(0, self._page_count - 1)
                 except Exception as e:
                     LOG.warning(f"关闭页面时出错: {e}")
+            
+            if page_created:
+                self._page_count = max(0, self._page_count - 1)

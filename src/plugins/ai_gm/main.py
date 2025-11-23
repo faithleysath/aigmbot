@@ -4,7 +4,7 @@ from ncatbot.plugin_system import (
     filter_registry,
     command_registry,
 )
-from ncatbot.core.event import GroupMessageEvent, NoticeEvent
+from ncatbot.core.event import GroupMessageEvent, NoticeEvent, PrivateMessageEvent
 from ncatbot.core.event.message_segment import At
 from ncatbot.utils import get_log
 from pathlib import Path
@@ -20,6 +20,7 @@ from .commands import CommandHandler
 from .visualizer import Visualizer
 from .web_ui import WebUI
 from .channel_config import ChannelConfigManager
+from .llm_config import LLMConfigManager
 import asyncio
 
 LOG = get_log(__name__)
@@ -27,7 +28,7 @@ LOG = get_log(__name__)
 
 class AIGMPlugin(NcatBotPlugin):
     name = "AIGMPlugin"
-    version = "1.0.0"
+    version = "1.1.0"
     description = "一个基于 AI GM 和 Git 版本控制概念的互动叙事游戏插件"
     author = "Cline"
 
@@ -43,6 +44,7 @@ class AIGMPlugin(NcatBotPlugin):
         self.visualizer: Visualizer | None = None
         self.web_ui: WebUI | None = None
         self.channel_config: ChannelConfigManager | None = None
+        self.llm_config_manager: LLMConfigManager | None = None
         self.data_path: Path = Path()
 
     async def on_load(self):
@@ -50,13 +52,12 @@ class AIGMPlugin(NcatBotPlugin):
         LOG.info(f"[{self.name}] 正在加载...")
 
         # 1. 注册配置项
-        self.register_config("openai_api_key", "YOUR_API_KEY_HERE")
-        self.register_config("openai_base_url", "https://api.openai.com/v1")
-        self.register_config("openai_model_name", "gpt-4-turbo")
         self.register_config("openai_max_retries", 2, "LLM API 最大重试次数")
         self.register_config("openai_base_delay", 1.0, "LLM API 基础重试延迟（秒）")
         self.register_config("openai_max_delay", 30.0, "LLM API 最大重试延迟（秒）")
         self.register_config("openai_timeout", 60.0, "LLM API 调用超时时间（秒）")
+        self.register_config("openai_max_pool_size", 20, "LLM API 连接池最大大小")
+        self.register_config("openai_client_idle_timeout", 3600.0, "LLM API 客户端空闲超时（秒）")
         self.register_config("pending_game_timeout", 300, "新游戏等待确认的超时时间（秒）")
         # TODO: 实现并发渲染限制机制
         self.register_config("max_concurrent_renders", 3, "最大并发渲染数量（预留配置）")
@@ -72,44 +73,44 @@ class AIGMPlugin(NcatBotPlugin):
         await self.db.connect()
         LOG.debug(f"[{self.name}] 数据库连接成功。")
 
-        # 3. 初始化LLM API
+        # 3. 初始化配置管理器
+        self.llm_config_manager = LLMConfigManager(data_dir)
+        await self.llm_config_manager.load()
+        LOG.debug(f"[{self.name}] LLM 配置管理器初始化完成。")
+
+        self.channel_config = ChannelConfigManager(data_dir)
+        LOG.debug(f"[{self.name}] 频道配置管理器初始化完成。")
+
+        # 4. 初始化LLM API (仅传递非敏感参数)
         try:
-            api_key = self.config.get("openai_api_key", "")
-            if not api_key or api_key == "YOUR_API_KEY_HERE":
-                raise ValueError("OpenAI API key is not configured.")
-            base_url = self.config.get("openai_base_url", "https://api.openai.com/v1")
-            model_name = self.config.get("openai_model_name", "gpt-4-turbo")
             max_retries = int(self.config.get("openai_max_retries", 2))
             base_delay = float(self.config.get("openai_base_delay", 1.0))
             max_delay = float(self.config.get("openai_max_delay", 30.0))
             timeout = float(self.config.get("openai_timeout", 60.0))
+            max_pool_size = int(self.config.get("openai_max_pool_size", 20))
+            client_idle_timeout = float(self.config.get("openai_client_idle_timeout", 3600.0))
             
             self.llm_api = LLM_API(
-                api_key=api_key,
-                base_url=base_url,
-                model_name=model_name,
                 max_retries=max_retries,
                 base_delay=base_delay,
                 max_delay=max_delay,
                 timeout=timeout,
+                max_pool_size=max_pool_size,
+                client_idle_timeout=client_idle_timeout,
             )
         except ValueError as e:
             LOG.error(f"LLM API 初始化失败: {e}")
 
-        # 4. 初始化渲染器
+        # 5. 初始化渲染器
         self.renderer = MarkdownRenderer()
         LOG.debug(f"[{self.name}] Markdown渲染器初始化完成。")
 
-        # 5. 初始化管理器
+        # 6. 初始化管理器
         self.cache_manager = CacheManager(cache_path)
         await self.cache_manager.load_from_disk()
 
-        # 6. 初始化频道配置管理器
-        self.channel_config = ChannelConfigManager(data_dir)
-        LOG.debug(f"[{self.name}] 频道配置管理器初始化完成。")
-
         if self.db and self.llm_api and self.renderer and self.cache_manager:
-            self.web_ui = WebUI(self.db, data_dir)
+            self.web_ui = WebUI(str(db_path), data_dir)
             
             # 在后台线程启动 Flare tunnel
             LOG.info("Starting Flare tunnel...")
@@ -147,6 +148,7 @@ class AIGMPlugin(NcatBotPlugin):
                 self.cache_manager,
                 content_fetcher,
                 channel_config=self.channel_config,
+                llm_config_manager=self.llm_config_manager,
             )
             self.command_handler = CommandHandler(
                 self,
@@ -157,6 +159,7 @@ class AIGMPlugin(NcatBotPlugin):
                 self.renderer,
                 web_ui=self.web_ui,
                 channel_config=self.channel_config,
+                llm_config_manager=self.llm_config_manager,
             )
             self.event_handler = EventHandler(
                 self,
@@ -167,11 +170,22 @@ class AIGMPlugin(NcatBotPlugin):
                 content_fetcher,
                 self.command_handler,
                 channel_config=self.channel_config,
+                llm_config_manager=self.llm_config_manager,
             )
         else:
             LOG.error(f"[{self.name}] 部分组件初始化失败，插件功能可能不完整。")
 
         LOG.info(f"[{self.name}] 加载完成。")
+
+    async def _safe_shutdown(self, coro, name: str, timeout: float = 5.0):
+        """辅助方法：带超时保护的安全关闭"""
+        try:
+            await asyncio.wait_for(coro, timeout=timeout)
+            LOG.info(f"{name} 已安全关闭")
+        except asyncio.TimeoutError:
+            LOG.warning(f"{name} 关闭超时（{timeout}秒），强制终止")
+        except Exception as e:
+            LOG.error(f"{name} 关闭时出错: {e}")
 
     async def on_close(self):
         """插件关闭时执行的操作"""
@@ -187,30 +201,41 @@ class AIGMPlugin(NcatBotPlugin):
             except Exception as e:
                 LOG.error(f"Error stopping tunnel during shutdown: {e}", exc_info=True)
         
-        # 3. 关闭缓存管理器
+        # 3. 关闭缓存管理器（带超时保护）
         if self.cache_manager:
-            try:
-                await self.cache_manager.shutdown()
-            except RuntimeError as e:
-                # 如果事件循环已关闭，缓存管理器可能无法正常关闭
-                LOG.warning(f"Failed to shutdown cache manager gracefully (event loop closed): {e}")
+            await self._safe_shutdown(
+                self.cache_manager.shutdown(),
+                "缓存管理器",
+                timeout=5.0
+            )
         
-        # 4. 关闭数据库连接
+        # 4. 关闭数据库连接（带超时保护）
         if self.db:
-            try:
-                await self.db.close()
-            except RuntimeError as e:
-                LOG.warning(f"Failed to close database gracefully (event loop closed): {e}")
-        
-        # 注释掉是因为renderer关闭的时候，因为它处于另一个事件循环中，所以无法正常关闭，会卡住关闭流程
-        # if self.renderer:
-        #     await self.renderer.close()
+            await self._safe_shutdown(
+                self.db.close(),
+                "数据库",
+                timeout=3.0
+            )
+            
+        # 5. 关闭渲染器（带超时保护）
+        if self.renderer:
+            await self._safe_shutdown(
+                self.renderer.close(),
+                "Markdown渲染器",
+                timeout=5.0
+            )
+
         LOG.info(f"[{self.name}] 已卸载。")
 
     @filter_registry.group_filter
     async def handle_group_message(self, event: GroupMessageEvent):
         if self.event_handler:
             await self.event_handler.handle_group_message(event)
+
+    @filter_registry.private_filter
+    async def handle_private_message(self, event: PrivateMessageEvent):
+        if self.event_handler:
+            await self.event_handler.handle_private_message(event)
 
     @on_notice
     async def handle_emoji_reaction(self, event: NoticeEvent):
@@ -418,3 +443,35 @@ class AIGMPlugin(NcatBotPlugin):
     async def aigm_advanced_mode(self, event: GroupMessageEvent, action: str):
         if self.command_handler:
             await self.command_handler.handle_advanced_mode(event, action)
+
+    # --- LLM Subcommands ---
+    llm_group = aigm_group.group("llm", description="LLM 配置管理")
+
+    @llm_group.command("status", description="查看当前群的 LLM 绑定状态")
+    async def aigm_llm_status(self, event: GroupMessageEvent):
+        if self.command_handler:
+            await self.command_handler.handle_llm_status(event)
+
+    @llm_group.command("bind", description="绑定 LLM 预设")
+    async def aigm_llm_bind(self, event: GroupMessageEvent, preset_name: str, duration: str = ""):
+        if duration == "":
+            duration_ = None
+        else:
+            duration_ = duration
+        if self.command_handler:
+            await self.command_handler.handle_llm_bind(event, preset_name, duration_)
+
+    @llm_group.command("unbind", description="解除 LLM 绑定")
+    async def aigm_llm_unbind(self, event: GroupMessageEvent):
+        if self.command_handler:
+            await self.command_handler.handle_llm_unbind(event)
+
+    @llm_group.command("set-fallback", description="[管理员] 设置保底 LLM 预设")
+    async def aigm_llm_set_fallback(self, event: GroupMessageEvent, preset_name: str):
+        if self.command_handler:
+            await self.command_handler.handle_llm_set_fallback(event, preset_name)
+
+    @llm_group.command("clear-fallback", description="[管理员] 清除保底 LLM 预设")
+    async def aigm_llm_clear_fallback(self, event: GroupMessageEvent):
+        if self.command_handler:
+            await self.command_handler.handle_llm_clear_fallback(event)

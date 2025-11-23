@@ -1,12 +1,13 @@
 # src/plugins/ai_gm/commands.py
 from ncatbot.plugin_system import NcatBotPlugin
-from ncatbot.core.event import GroupMessageEvent
+from ncatbot.core.event import GroupMessageEvent, PrivateMessageEvent
 from ncatbot.core.event.message_segment import At, MessageArray, Text, Reply, Image
 from ncatbot.core.helper.forward_constructor import ForwardConstructor
 from ncatbot.core.api import BotAPI
 from ncatbot.utils import get_log
 import json
 import re
+import time
 
 from .db import Database
 from .game_manager import GameManager
@@ -17,6 +18,7 @@ from .utils import bytes_to_base64
 from .constants import HISTORY_MAX_LIMIT
 from .web_ui import WebUI
 from .channel_config import ChannelConfigManager
+from .llm_config import LLMConfigManager, LLMPreset
 
 LOG = get_log(__name__)
 
@@ -32,6 +34,7 @@ class CommandHandler:
         renderer: MarkdownRenderer,
         web_ui: WebUI | None = None,
         channel_config: ChannelConfigManager | None = None,
+        llm_config_manager: LLMConfigManager | None = None,
     ):
         self.plugin = plugin
         self.web_ui = web_ui
@@ -43,6 +46,7 @@ class CommandHandler:
         self.renderer = renderer
         self.rbac_manager = plugin.rbac_manager
         self.channel_config = channel_config
+        self.llm_config_manager = llm_config_manager
 
     async def _validate_name(self, name: str) -> bool:
         """验证分支或标签名称的格式"""
@@ -131,16 +135,20 @@ class CommandHandler:
 
 
     async def handle_help(self, event: GroupMessageEvent):
-        """处理 /aigm help 命令，将其渲染为图片发送"""        
-        image_bytes = await self.renderer.render_help_page()
-        
-        if image_bytes:
-            await self.api.post_group_file(
-                str(event.group_id),
-                image=f"data:image/png;base64,{bytes_to_base64(image_bytes)}",
-            )
-        else:
-            await event.reply("❌ 生成帮助图片失败，请检查日志。", at=False)
+        """处理 /aigm help 命令，将其渲染为图片发送"""
+        try:
+            image_bytes = await self.renderer.render_help_page()
+            
+            if image_bytes:
+                await self.api.post_group_file(
+                    str(event.group_id),
+                    image=f"data:image/png;base64,{bytes_to_base64(image_bytes)}",
+                )
+            else:
+                await event.reply("❌ 生成帮助图片失败，请检查日志。", at=False)
+        except Exception as e:
+            LOG.error(f"处理帮助命令时出错: {e}", exc_info=True)
+            await event.reply("❌ 处理命令时发生错误，请联系管理员。", at=False)
 
     async def handle_webui(self, event: GroupMessageEvent):
         """处理 /aigm webui 命令"""
@@ -174,28 +182,32 @@ class CommandHandler:
 
     async def handle_status(self, event: GroupMessageEvent, api: BotAPI):
         """处理 /aigm status 命令"""
-        group_id = str(event.group_id)
-        game = await self.db.get_game_by_channel_id(group_id)
+        try:
+            group_id = str(event.group_id)
+            game = await self.db.get_game_by_channel_id(group_id)
 
-        if not game:
-            await event.reply("当前群组没有正在进行的游戏。", at=False)
-            return
+            if not game:
+                await event.reply("当前群组没有正在进行的游戏。", at=False)
+                return
 
-        message_array = MessageArray([
-            Text("游戏状态：\n"),
-            Text(f"- 游戏ID: {game['game_id']}\n"),
-            Text("- 主持人: "), At(game['host_user_id']), Text("\n"),
-            Text(f"- 是否冻结: {'是' if game['is_frozen'] else '否'}\n"),
-            Text(f"- 创建时间: {game['created_at']}\n"),
-            Text(f"- 更新时间: {game['updated_at']}")
-        ])
-        if game['main_message_id']:
-            message_array += MessageArray([
-                Text(f"\n- 主消息ID: {game['main_message_id']}\n"),
-                Reply(game['main_message_id'])
+            message_array = MessageArray([
+                Text("游戏状态：\n"),
+                Text(f"- 游戏ID: {game['game_id']}\n"),
+                Text("- 主持人: "), At(game['host_user_id']), Text("\n"),
+                Text(f"- 是否冻结: {'是' if game['is_frozen'] else '否'}\n"),
+                Text(f"- 创建时间: {game['created_at']}\n"),
+                Text(f"- 更新时间: {game['updated_at']}")
             ])
+            if game['main_message_id']:
+                message_array += MessageArray([
+                    Text(f"\n- 主消息ID: {game['main_message_id']}\n"),
+                    Reply(game['main_message_id'])
+                ])
 
-        await api.post_group_array_msg(event.group_id, message_array)
+            await api.post_group_array_msg(event.group_id, message_array)
+        except Exception as e:
+            LOG.error(f"处理状态命令时出错: {e}", exc_info=True)
+            await event.reply("❌ 获取状态失败，请联系管理员。", at=False)
 
     async def handle_branch_list(self, event: GroupMessageEvent, mode: str | None = None):
         """处理 /aigm branch list [all] 命令"""
@@ -468,22 +480,26 @@ class CommandHandler:
 
     async def handle_game_list(self, event: GroupMessageEvent):
         """处理 /aigm game list 命令"""
-        games = await self.db.get_all_games()
+        try:
+            games = await self.db.get_all_games()
 
-        if not games:
-            await event.reply("当前没有已创建的游戏。")
-            return
+            if not games:
+                await event.reply("当前没有已创建的游戏。")
+                return
 
-        game_list_text = "游戏列表：\n"
-        for game in games:
-            game_list_text += (
-                f"- ID: {game['game_id']}, "
-                f"频道: {game['channel_id'] or '未附加'}, "
-                f"主持人: {game['host_user_id']}, "
-                f"创建于: {game['created_at']}\n"
-            )
+            game_list_text = "游戏列表：\n"
+            for game in games:
+                game_list_text += (
+                    f"- ID: {game['game_id']}, "
+                    f"频道: {game['channel_id'] or '未附加'}, "
+                    f"主持人: {game['host_user_id']}, "
+                    f"创建于: {game['created_at']}\n"
+                )
 
-        await event.reply(game_list_text.strip(), at=False)
+            await event.reply(game_list_text.strip(), at=False)
+        except Exception as e:
+            LOG.error(f"获取游戏列表失败: {e}", exc_info=True)
+            await event.reply("❌ 获取游戏列表失败，请联系管理员。", at=False)
 
     async def handle_game_attach(self, event: GroupMessageEvent, game_id: int):
         """处理 /aigm game attach <id> 命令"""
@@ -883,3 +899,257 @@ class CommandHandler:
                 "• status - 查看当前状态",
                 at=False
             )
+
+    # --- LLM Management ---
+
+    async def handle_llm_add(self, event: PrivateMessageEvent, name: str, model: str, base_url: str, api_key: str, force: bool = False):
+        """处理私聊 /aigm llm add 指令"""
+        if not self.llm_config_manager:
+            await event.reply("❌ LLM 配置管理器未初始化。")
+            return
+        
+        user_id = str(event.user_id)
+        
+        # 构建预设对象
+        preset: LLMPreset = {
+            "model": model,
+            "base_url": base_url,
+            "api_key": api_key
+        }
+        
+        # 先测试预设可用性
+        await event.reply(f"🔍 正在测试预设 '{name}' 的连接性...")
+        
+        llm_api = getattr(self.plugin, 'llm_api', None)
+        is_valid, error_msg = await self.llm_config_manager.test_preset(preset, llm_api)
+        
+        if is_valid or force:
+            # 测试成功或强制保存
+            try:
+                await self.llm_config_manager.add_preset(user_id, name, model, base_url, api_key)
+                
+                # Safe logging
+                key_preview = "***" + api_key[-4:] if len(api_key) > 4 else "***"
+                LOG.info(f"User {user_id} added LLM preset '{name}' (model={model}, base_url={base_url}, key={key_preview})")
+                
+                msg = f"✅ 已保存 LLM 预设: {name}\n模型: {model}\n📌 现在可以在群聊中使用 /aigm llm bind {name} 贡献算力"
+                if not is_valid:
+                    msg = f"⚠️ 预设测试失败({error_msg})，但已强制保存。\n" + msg
+                else:
+                    msg = "✅ 预设测试成功！\n" + msg
+                
+                await event.reply(msg)
+            except Exception as e:
+                LOG.error(f"保存预设失败: {e}", exc_info=True)
+                await event.reply(f"❌ 保存预设失败: {e}")
+        else:
+            # 测试失败且未强制保存
+            await event.reply(
+                f"⚠️ 预设测试失败: {error_msg}\n\n"
+                f"可能的原因：\n"
+                f"• API Key 无效或已过期\n"
+                f"• 模型名称错误\n"
+                f"• Base URL 不正确\n"
+                f"• 网络连接问题\n\n"
+                f"❌ 预设未保存。如需强制保存，请在命令末尾添加 --force"
+            )
+
+    async def handle_llm_remove(self, event: PrivateMessageEvent, name: str):
+        """处理私聊 /aigm llm remove 指令"""
+        if not self.llm_config_manager:
+            await event.reply("❌ LLM 配置管理器未初始化。")
+            return
+
+        user_id = str(event.user_id)
+        success, using_groups = await self.llm_config_manager.remove_preset(user_id, name)
+        
+        if success:
+            await event.reply(f"✅ 已删除 LLM 预设: {name}")
+        else:
+            if using_groups:
+                groups_str = ", ".join(using_groups)
+                await event.reply(f"❌ 删除失败: 该预设正在被以下群组使用: {groups_str}\n请先解除绑定后再删除。")
+            else:
+                await event.reply(f"❌ 删除失败: 找不到名为 '{name}' 的预设。")
+
+    async def handle_llm_test(self, event: PrivateMessageEvent, name: str):
+        """处理私聊 /aigm llm test 指令 - 手动测试预设"""
+        if not self.llm_config_manager:
+            await event.reply("❌ LLM 配置管理器未初始化。")
+            return
+
+        user_id = str(event.user_id)
+        preset = await self.llm_config_manager.get_preset(user_id, name)
+        
+        if not preset:
+            await event.reply(f"❌ 找不到名为 '{name}' 的预设。")
+            return
+
+        await event.reply(f"🔍 正在测试预设 '{name}'...\n模型: {preset['model']}\nBase URL: {preset['base_url']}")
+        
+        llm_api = getattr(self.plugin, 'llm_api', None)
+        is_valid, error_msg = await self.llm_config_manager.test_preset(preset, llm_api)
+        
+        if is_valid:
+            await event.reply(
+                f"✅ 测试成功！\n"
+                f"预设 '{name}' 可以正常使用\n"
+                f"模型: {preset['model']}"
+            )
+        else:
+            await event.reply(
+                f"❌ 测试失败\n"
+                f"预设: {name}\n"
+                f"错误: {error_msg}\n\n"
+                f"💡 建议：\n"
+                f"• 检查 API Key 是否有效\n"
+                f"• 确认模型名称正确\n"
+                f"• 验证 Base URL 可访问\n"
+                f"• 如需修改，请删除后重新添加"
+            )
+
+    async def handle_llm_status(self, event: GroupMessageEvent | PrivateMessageEvent):
+        """显示 LLM 状态信息：私聊显示预设列表，群聊显示绑定状态"""
+        if not self.llm_config_manager:
+            await event.reply("❌ LLM 配置管理器未初始化。")
+            return
+
+        msg = ""
+        
+        # 1. 私聊/所有场景：显示用户的预设列表
+        # 在群聊中也显示这个吗？用户可能想知道自己有哪些预设可以 bind。
+        # 为了保持界面整洁，群聊中可以简化显示，或者只显示 status。
+        # 现在的逻辑是混合显示的。如果用户只是想看群状态，看到一大堆自己的预设可能会烦。
+        # 改动：群聊只显示绑定状态，私聊只显示预设列表。
+        
+        if isinstance(event, PrivateMessageEvent):
+            user_id = str(event.user_id)
+            presets = await self.llm_config_manager.get_user_presets_safe(user_id)
+            msg += "📋 您的 LLM 预设列表:\n"
+            if not presets:
+                msg += "(无)\n"
+            else:
+                for name, p in presets.items():
+                    msg += f"- {name}: {p['model']} ({p['api_key']})\n"
+
+        elif isinstance(event, GroupMessageEvent):
+            group_id = str(event.group_id)
+            status = await self.llm_config_manager.get_binding_status(group_id)
+            msg += "🔗 当前群聊 LLM 绑定状态:\n"
+            
+            active = status.get("active")
+            if active:
+                owner = active["owner_id"]
+                ttl = "永久"
+                if active["expire_at"]:
+                    remaining = int(active["expire_at"] - time.time())
+                    ttl = f"剩余 {remaining//60} 分钟" if remaining > 0 else "已过期"
+                msg += f"✅ Active: {active['preset_name']} (by {owner}) - {ttl}\n"
+            else:
+                msg += "⚪ Active: 无\n"
+                
+            fallback = status.get("fallback")
+            if fallback:
+                msg += f"🛡️ Fallback: {fallback['preset_name']} (by {fallback['owner_id']})\n"
+            else:
+                msg += "⚪ Fallback: 无\n"
+
+        if msg:
+            await event.reply(msg)
+
+    async def handle_llm_bind(self, event: GroupMessageEvent, preset_name: str, duration_str: str | None = None):
+        """处理群聊 /aigm llm bind 指令"""
+        if not self.llm_config_manager:
+            await event.reply("❌ LLM 配置管理器未初始化。", at=False)
+            return
+
+        user_id = str(event.user_id)
+        preset = await self.llm_config_manager.get_preset(user_id, preset_name)
+        if not preset:
+            await event.reply(f"❌ 找不到名为 '{preset_name}' 的预设，请先私聊 Bot 添加。", at=False)
+            return
+
+        duration = None
+        if duration_str:
+            if duration_str == "--session":
+                # Session 暂时等同于 24 小时，或者直到 detach
+                duration = 24 * 3600
+            else:
+                duration = self.llm_config_manager.parse_duration(duration_str)
+                if duration is None:
+                    await event.reply(
+                        "❌ 时长格式错误。\n"
+                        "请务必包含时间单位（m/h/d）。\n"
+                        "支持的格式示例：\n"
+                        "• 30m (30分钟)\n"
+                        "• 12h (12小时)\n"
+                        "• 7d (7天)\n"
+                        "• --session (会话级，暂定24h)\n"
+                        "注意：最长支持 90 天。",
+                        at=False
+                    )
+                    return
+        
+        success, msg = await self.llm_config_manager.bind_active(str(event.group_id), user_id, preset_name, duration)
+        if success:
+            ttl_msg = f"有效时长: {duration//60} 分钟" if duration else "永久有效"
+            await event.reply(f"✅ 成功绑定 LLM 预设: {preset_name}\n{ttl_msg}\n感谢您的算力贡献！", at=False)
+        else:
+            await event.reply(f"❌ 绑定失败：{msg}", at=False)
+
+    async def handle_llm_unbind(self, event: GroupMessageEvent):
+        """处理群聊 /aigm llm unbind 指令"""
+        if not self.llm_config_manager:
+            return
+
+        group_id = str(event.group_id)
+        user_id = str(event.user_id)
+        
+        # 检查绑定状态
+        status = await self.llm_config_manager.get_binding_status(group_id)
+        active = status.get("active")
+        
+        if not active:
+            await event.reply("当前没有 Active 绑定。", at=False)
+            return
+
+        # 权限检查：所有者 或 管理员
+        is_owner = active["owner_id"] == user_id
+        is_admin = self._check_has_root_or_admin(user_id, event.sender.role)
+        
+        if is_owner or is_admin:
+            await self.llm_config_manager.unbind_active(group_id)
+            await event.reply("✅ 已解除 Active 绑定。", at=False)
+        else:
+            await event.reply("❌ 权限不足：只能解除自己绑定的预设，管理员除外。", at=False)
+
+    async def handle_llm_set_fallback(self, event: GroupMessageEvent, preset_name: str):
+        """处理 /aigm llm set-fallback 指令 (仅管理员)"""
+        if not self.llm_config_manager:
+            return
+
+        user_id = str(event.user_id)
+        if not self._check_has_root_or_admin(user_id, event.sender.role):
+            await event.reply("❌ 权限不足：只有管理员可以设置 Fallback。", at=False)
+            return
+
+        preset = await self.llm_config_manager.get_preset(user_id, preset_name)
+        if not preset:
+            await event.reply(f"❌ 找不到名为 '{preset_name}' 的预设。", at=False)
+            return
+
+        await self.llm_config_manager.set_fallback(str(event.group_id), user_id, preset_name)
+        await event.reply(f"🛡️ 已设置保底 LLM 预设: {preset_name}", at=False)
+
+    async def handle_llm_clear_fallback(self, event: GroupMessageEvent):
+        """处理 /aigm llm clear-fallback 指令 (仅管理员)"""
+        if not self.llm_config_manager:
+            return
+
+        user_id = str(event.user_id)
+        if not self._check_has_root_or_admin(user_id, event.sender.role):
+            await event.reply("❌ 权限不足。", at=False)
+            return
+
+        await self.llm_config_manager.clear_fallback(str(event.group_id))
+        await event.reply("已清除保底 LLM 配置。", at=False)

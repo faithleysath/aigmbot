@@ -16,8 +16,9 @@ from .db import Database
 LOG = get_log(__name__)
 
 class WebUI:
-    def __init__(self, db: Database, plugin_data_path: Path):
-        self.db = db
+    def __init__(self, db_path: str, plugin_data_path: Path):
+        self.db_path = db_path
+        self.db: Database | None = None
         self.plugin_data_path = plugin_data_path
         self.app = FastAPI(lifespan=self.lifespan)
         self.templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -63,10 +64,15 @@ class WebUI:
     async def lifespan(self, app: FastAPI):
         # Startup
         LOG.info("Web UI server is starting up...")
+        self.db = Database(self.db_path)
+        await self.db.connect()
+        
         # Tunnel 的启动和关闭由插件生命周期管理（main.py）
         yield
         # Shutdown
         LOG.info("Web UI server is shutting down...")
+        if self.db:
+            await self.db.close()
 
     def start_server(self):
         """在独立线程中启动 Web UI 服务器"""
@@ -175,77 +181,115 @@ class WebUI:
             self.tunnel_ready.set()
 
     async def route_game_list(self, request: Request):
-        games = await self.db.get_all_games()
-        return self.templates.TemplateResponse("game_list.html", {"request": request, "games": games})
+        if not self.db:
+            raise HTTPException(status_code=503, detail="Database not initialized")
+        try:
+            games = await self.db.get_all_games()
+            return self.templates.TemplateResponse("game_list.html", {"request": request, "games": games})
+        except Exception as e:
+            LOG.error(f"Error fetching game list: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     async def route_game_detail(self, request: Request, game_id: int):
-        game = await self.db.get_game_by_game_id(game_id)
-        if not game:
-            raise HTTPException(status_code=404, detail="Game not found")
-        branches = await self.db.get_all_branches_for_game(game_id)
-        tags = await self.db.get_all_tags_for_game(game_id)
-        return self.templates.TemplateResponse("game_detail.html", {"request": request, "game": game, "branches": branches, "tags": tags})
+        if not self.db:
+            raise HTTPException(status_code=503, detail="Database not initialized")
+        try:
+            game = await self.db.get_game_by_game_id(game_id)
+            if not game:
+                raise HTTPException(status_code=404, detail="Game not found")
+            branches = await self.db.get_all_branches_for_game(game_id)
+            tags = await self.db.get_all_tags_for_game(game_id)
+            return self.templates.TemplateResponse("game_detail.html", {"request": request, "game": game, "branches": branches, "tags": tags})
+        except HTTPException:
+            raise
+        except Exception as e:
+            LOG.error(f"Error fetching game details {game_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     async def route_branch_history(self, request: Request, game_id: int, branch_name: str):
-        branch = await self.db.get_branch_by_name(game_id, branch_name)
-        if not branch or branch['tip_round_id'] is None:
-            raise HTTPException(status_code=404, detail="Branch not found or empty")
-        
-        history = await self.db.get_round_ancestors(branch['tip_round_id'], limit=9999)
-        return self.templates.TemplateResponse("branch_history.html", {"request": request, "game_id": game_id, "branch": branch, "history": history})
+        if not self.db:
+            raise HTTPException(status_code=503, detail="Database not initialized")
+        try:
+            branch = await self.db.get_branch_by_name(game_id, branch_name)
+            if not branch or branch['tip_round_id'] is None:
+                raise HTTPException(status_code=404, detail="Branch not found or empty")
+            
+            history = await self.db.get_round_ancestors(branch['tip_round_id'], limit=9999)
+            return self.templates.TemplateResponse("branch_history.html", {"request": request, "game_id": game_id, "branch": branch, "history": history})
+        except HTTPException:
+            raise
+        except Exception as e:
+            LOG.error(f"Error fetching branch history {branch_name}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     async def route_round_detail(self, request: Request, game_id: int, round_id: int):
-        round_info = await self.db.get_round_info(round_id)
-        if not round_info:
-            raise HTTPException(status_code=404, detail="Round not found")
-        
-        # Find next and previous rounds
-        parent_id = round_info['parent_id']
-        children = await self.db.get_child_rounds(round_id)
-        next_round_id = children[0]['round_id'] if children else None
+        if not self.db:
+            raise HTTPException(status_code=503, detail="Database not initialized")
+        try:
+            round_info = await self.db.get_round_info(round_id)
+            if not round_info:
+                raise HTTPException(status_code=404, detail="Round not found")
+            
+            # Find next and previous rounds
+            parent_id = round_info['parent_id']
+            children = await self.db.get_child_rounds(round_id)
+            next_round_id = children[0]['round_id'] if children else None
 
-        return self.templates.TemplateResponse("round_detail.html", {
-            "request": request, 
-            "game_id": game_id,
-            "round": round_info,
-            "prev_round_id": parent_id if parent_id != -1 else None,
-            "next_round_id": next_round_id
-        })
+            return self.templates.TemplateResponse("round_detail.html", {
+                "request": request, 
+                "game_id": game_id,
+                "round": round_info,
+                "prev_round_id": parent_id if parent_id != -1 else None,
+                "next_round_id": next_round_id
+            })
+        except HTTPException:
+            raise
+        except Exception as e:
+            LOG.error(f"Error fetching round details {round_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     async def route_graph_page(self, request: Request, game_id: int):
         return self.templates.TemplateResponse("graph.html", {"request": request, "game_id": game_id})
 
     async def route_graph_data(self, request: Request, game_id: int):
-        game = await self.db.get_game_by_game_id(game_id)
-        if not game:
-            raise HTTPException(status_code=404, detail="Game not found")
+        if not self.db:
+            raise HTTPException(status_code=530, detail="Database not initialized")
+        try:
+            game = await self.db.get_game_by_game_id(game_id)
+            if not game:
+                raise HTTPException(status_code=404, detail="Game not found")
 
-        all_rounds = await self.db.get_all_rounds_for_game(game_id)
-        all_branches = await self.db.get_all_branches_for_game(game_id)
-        all_tags = await self.db.get_all_tags_for_game(game_id)
-        head_branch_id = game["head_branch_id"]
+            all_rounds = await self.db.get_all_rounds_for_game(game_id)
+            all_branches = await self.db.get_all_branches_for_game(game_id)
+            all_tags = await self.db.get_all_tags_for_game(game_id)
+            head_branch_id = game["head_branch_id"]
 
-        nodes = []
-        edges = []
+            nodes = []
+            edges = []
 
-        for r in all_rounds:
-            round_id = r["round_id"]
-            label = f"Round {round_id}"
-            nodes.append({"id": str(round_id), "label": label})
-            if r["parent_id"] != -1:
-                edges.append({"from": str(r["parent_id"]), "to": str(round_id)})
+            for r in all_rounds:
+                round_id = r["round_id"]
+                label = f"Round {round_id}"
+                nodes.append({"id": str(round_id), "label": label})
+                if r["parent_id"] != -1:
+                    edges.append({"from": str(r["parent_id"]), "to": str(round_id)})
 
-        # Add branch and tag info to nodes
-        for branch in all_branches:
-            for node in nodes:
-                if node["id"] == str(branch["tip_round_id"]):
-                    is_head = branch['branch_id'] == head_branch_id
-                    branch_label = f"🌿 {branch['name']}" + (" (HEAD)" if is_head else "")
-                    node["label"] += f"\n{branch_label}"
+            # Add branch and tag info to nodes
+            for branch in all_branches:
+                for node in nodes:
+                    if node["id"] == str(branch["tip_round_id"]):
+                        is_head = branch['branch_id'] == head_branch_id
+                        branch_label = f"🌿 {branch['name']}" + (" (HEAD)" if is_head else "")
+                        node["label"] += f"\n{branch_label}"
 
-        for tag in all_tags:
-            for node in nodes:
-                if node["id"] == str(tag["round_id"]):
-                    node["label"] += f"\n🏷️ {tag['name']}"
-        
-        return JSONResponse(content={"nodes": nodes, "edges": edges})
+            for tag in all_tags:
+                for node in nodes:
+                    if node["id"] == str(tag["round_id"]):
+                        node["label"] += f"\n🏷️ {tag['name']}"
+            
+            return JSONResponse(content={"nodes": nodes, "edges": edges})
+        except HTTPException:
+            raise
+        except Exception as e:
+            LOG.error(f"Error fetching graph data for game {game_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error")

@@ -1,4 +1,5 @@
 import aiosqlite
+import asyncio
 from ncatbot.utils import get_log
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -20,6 +21,11 @@ class Database:
         self._connection_healthy = True
         self._last_health_check = 0.0
         self._health_check_interval = 60.0  # 60秒检查一次连接健康
+        self._write_lock = asyncio.Lock()  # 顶层写事务锁，防止并发写入冲突
+
+    def set_health_check_interval(self, interval: float):
+        """设置健康检查间隔时间"""
+        self._health_check_interval = interval
 
     async def connect(self):
         """连接到数据库并进行初始化"""
@@ -58,7 +64,9 @@ class Database:
         
         # 测试连接是否可用
         try:
-            await self.conn.execute("SELECT 1")
+            # 使用更高效的 cursor 上下文，避免隐式事务
+            async with self.conn.execute("SELECT 1") as cursor:
+                await cursor.fetchone()
             self._last_health_check = now
             self._connection_healthy = True
         except Exception as e:
@@ -69,7 +77,8 @@ class Database:
             except Exception:
                 pass
             await self.connect()
-            self._last_health_check = now
+            # 重连后重置计时器
+            self._last_health_check = time.time()
 
     async def _ensure_conn_or_raise(self):
         """
@@ -221,7 +230,9 @@ class Database:
         提供支持嵌套的事务上下文管理器。
         
         嵌套事务通过 SAVEPOINT 实现。顶层事务使用 BEGIN IMMEDIATE。
-        改进版本：使用 UUID 生成 savepoint 名称，避免潜在的命名冲突。
+        改进版本：
+        1. 使用 UUID 生成 savepoint 名称，避免潜在的命名冲突。
+        2. 使用 asyncio.Lock 确保同一时间只有一个顶层写事务，防止 'database is locked' 或并发事务错误。
         
         Yields:
             None
@@ -238,22 +249,11 @@ class Database:
 
         # 获取当前事务深度
         depth = _transaction_depth.get()
-        _transaction_depth.set(depth + 1)
-
-        try:
-            if depth > 0:
-                # 嵌套事务：使用 UUID 生成唯一的 savepoint 名称
-                savepoint_name = f"sp_{uuid.uuid4().hex[:8]}"
-                try:
-                    await self.conn.execute(f"SAVEPOINT {savepoint_name};")
-                    yield
-                    await self.conn.execute(f"RELEASE SAVEPOINT {savepoint_name};")
-                except Exception:
-                    await self.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name};")
-                    await self.conn.execute(f"RELEASE SAVEPOINT {savepoint_name};")
-                    raise
-            else:
-                # 顶层事务
+        
+        if depth == 0:
+            # 顶层事务：需要获取写锁
+            async with self._write_lock:
+                _transaction_depth.set(depth + 1)
                 try:
                     await self.conn.execute("BEGIN IMMEDIATE;")
                     yield
@@ -261,9 +261,30 @@ class Database:
                 except Exception:
                     await self.conn.rollback()
                     raise
-        finally:
-            # 恢复事务深度
-            _transaction_depth.set(depth)
+                finally:
+                    _transaction_depth.set(depth)
+        else:
+            # 嵌套事务：已经持有锁（因为父事务持有），直接执行
+            _transaction_depth.set(depth + 1)
+            try:
+                # 嵌套事务：使用 UUID 生成唯一的 savepoint 名称
+                savepoint_name = f"sp_{uuid.uuid4().hex[:8]}"
+                try:
+                    await self.conn.execute(f"SAVEPOINT {savepoint_name};")
+                    yield
+                    await self.conn.execute(f"RELEASE SAVEPOINT {savepoint_name};")
+                except Exception:
+                    # 发生异常时回滚到 savepoint
+                    await self.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name};")
+                    # 尝试释放 savepoint
+                    try:
+                        await self.conn.execute(f"RELEASE SAVEPOINT {savepoint_name};")
+                    except Exception as e:
+                        LOG.warning(f"释放 savepoint {savepoint_name} 失败: {e}")
+                    raise
+            finally:
+                # 恢复事务深度
+                _transaction_depth.set(depth)
 
     async def is_game_running(self, channel_id: str) -> bool:
         """

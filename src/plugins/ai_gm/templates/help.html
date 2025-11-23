@@ -74,6 +74,7 @@
         <li><code class="command-name">/aigm game detach</code> - <span class="command-desc">从当前频道分离游戏</span> <span class="permission">[主持人/管理员]</span></li>
         <li><code class="command-name">/aigm game sethost @user</code> - <span class="command-desc">变更当前频道游戏的主持人</span> <span class="permission">[主持人/管理员]</span></li>
         <li><code class="command-name">/aigm game sethost-by-id &lt;id&gt; @user</code> - <span class="command-desc">变更指定ID游戏的主持人</span> <span class="permission">[主持人/管理员]</span></li>
+        <li><code class="command-name">/aigm advanced-mode &lt;enable|disable|status&gt;</code> - <span class="command-desc">高级模式设置</span> <span class="permission">[主持人/管理员]</span></li>
     </ul>
 
     <h2>分支操作</h2>
@@ -98,18 +99,32 @@
     <h2>标签操作</h2>
     <ul class="command-list">
         <li><code class="command-name">/aigm tag list</code> - <span class="command-desc">列出所有标签</span></li>
-        <li><code class="command-name">/aigm tag show <name></code> - <span class="command-desc">查看标签指向的回合内容</span></li>
-        <li><code class="command-name">/aigm tag history <name> [limit=N]</code> - <span class="command-desc">查看标签指向的回合的历史记录</span></li>
-        <li><code class="command-name">/aigm tag create <name> [round_id]</code> - <span class="command-desc">创建新标签</span> <span class="permission">[主持人/管理员]</span></li>
-        <li><code class="command-name">/aigm tag delete <name></code> - <span class="command-desc">删除标签</span> <span class="permission">[主持人/管理员]</span></li>
+        <li><code class="command-name">/aigm tag show &lt;name&gt;</code> - <span class="command-desc">查看标签指向的回合内容</span></li>
+        <li><code class="command-name">/aigm tag history &lt;name&gt; [limit=N]</code> - <span class="command-desc">查看标签指向的回合的历史记录</span></li>
+        <li><code class="command-name">/aigm tag create &lt;name&gt; [round_id]</code> - <span class="command-desc">创建新标签</span> <span class="permission">[主持人/管理员]</span></li>
+        <li><code class="command-name">/aigm tag delete &lt;name&gt;</code> - <span class="command-desc">删除标签</span> <span class="permission">[主持人/管理员]</span></li>
+    </ul>
+
+    <h2>LLM 配置</h2>
+    <ul class="command-list">
+        <li><code class="command-name">/aigm llm status</code> - <span class="command-desc">查看当前群的 LLM 绑定状态</span></li>
+        <li><code class="command-name">/aigm llm bind &lt;preset_name&gt; [duration]</code> - <span class="command-desc">绑定 LLM 预设</span></li>
+        <li><code class="command-name">/aigm llm unbind</code> - <span class="command-desc">解除 LLM 绑定</span> <span class="permission">[所有者/管理员]</span></li>
+        <li><code class="command-name">/aigm llm set-fallback &lt;preset_name&gt;</code> - <span class="command-desc">设置保底 LLM 预设</span> <span class="permission">[管理员]</span></li>
+        <li><code class="command-name">/aigm llm clear-fallback</code> - <span class="command-desc">清除保底 LLM 预设</span> <span class="permission">[管理员]</span></li>
+    </ul>
+
+    <h2>缓存管理</h2>
+    <ul class="command-list">
+        <li><code class="command-name">/aigm cache pending clear</code> - <span class="command-desc">清空待处理的新游戏请求</span></li>
     </ul>
 
     <h2>管理员命令</h2>
     <ul class="command-list">
         <li><code class="command-name">/aigm admin unfreeze</code> - <span class="command-desc">强制解冻当前游戏</span> <span class="permission">[群管理/ROOT]</span></li>
         <li><code class="command-name">/aigm admin refresh-tunnel</code> - <span class="command-desc">重新刷新 Cloudflare tunnel</span> <span class="permission">[ROOT]</span></li>
-        <li><code class="command-name">/aigm admin delete <id></code> - <span class="command-desc">删除指定ID的游戏</span> <span class="permission">[ROOT]</span></li>
+        <li><code class="command-name">/aigm admin delete &lt;id&gt;</code> - <span class="command-desc">删除指定ID的游戏</span> <span class="permission">[ROOT]</span></li>
+        <li><code class="command-name">/aigm admin clear-help-cache</code> - <span class="command-desc">清除帮助图片缓存</span> <span class="permission">[ROOT]</span></li>
     </ul>
 
 </body>
-</html>

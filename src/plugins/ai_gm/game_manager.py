@@ -1,5 +1,7 @@
 import json
+import time
 from typing import cast
+from collections import OrderedDict
 from ncatbot.utils import get_log
 from ncatbot.plugin_system import NcatBotPlugin
 from .db import Database
@@ -11,6 +13,7 @@ from .content_fetcher import ContentFetcher
 from .exceptions import TipChangedError, GameFrozenError
 from .constants import MAX_HISTORY_ROUNDS, NSFW_PROMPT
 from .channel_config import ChannelConfigManager
+from .llm_config import LLMConfigManager, LLMPreset, BindingInfo
 
 LOG = get_log(__name__)
 
@@ -24,7 +27,8 @@ class GameManager:
         renderer: MarkdownRenderer,
         cache_manager: CacheManager,
         content_fetcher: ContentFetcher,
-        channel_config: ChannelConfigManager = None,
+        channel_config: ChannelConfigManager | None = None,
+        llm_config_manager: LLMConfigManager | None = None,
     ):
         self.plugin = plugin
         self.api = plugin.api
@@ -34,6 +38,82 @@ class GameManager:
         self.cache_manager = cache_manager
         self.content_fetcher = content_fetcher
         self.channel_config = channel_config
+        self.llm_config_manager = llm_config_manager
+        # 添加历史记录缓存: {cache_key: (messages, timestamp)}
+        # 使用 OrderedDict 实现 LRU 缓存
+        self._history_cache: OrderedDict[str, tuple[list[ChatCompletionMessageParam], float]] = OrderedDict()
+        self._cache_ttl = 300  # 5分钟缓存
+        self._max_cache_size = 100  # 最大缓存项数
+
+    async def _get_llm_preset(self, group_id: str) -> tuple[LLMPreset | None, BindingInfo | None, str | None]:
+        """
+        获取当前群绑定的 LLM Preset。
+        返回: (preset, binding_info, error_detail)
+        - 如果成功: (preset, binding_dict, None)
+        - 如果未绑定: (None, None, "no_binding")
+        - 如果预设被删除: (None, None, "preset_deleted:preset_name:owner_id")
+        """
+        if not self.llm_config_manager:
+            return None, None, "no_manager"
+
+        # 1. 获取绑定信息
+        binding = await self.llm_config_manager.get_group_binding(group_id)
+        if not binding:
+            return None, None, "no_binding"
+
+        # 2. 解析 Preset
+        preset = await self.llm_config_manager.resolve_preset(binding)
+        if not preset:
+            # 预设被删除了
+            error_detail = f"preset_deleted:{binding['preset_name']}:{binding['owner_id']}"
+            return None, None, error_detail
+            
+        return preset, binding, None
+
+    async def _get_completion_with_fallback(
+        self,
+        messages: list[ChatCompletionMessageParam],
+        channel_id: str,
+        initial_preset: LLMPreset,
+        initial_binding: BindingInfo
+    ) -> tuple[str | None, dict | None, str | None]:
+        """
+        尝试获取 LLM 响应，如果失败且存在不同的 Fallback，则尝试 Fallback。
+        """
+        # 1. 尝试使用初始预设
+        try:
+            return await self.llm_api.get_completion(messages, preset=initial_preset)
+        except Exception as e:
+            LOG.warning(f"Primary LLM call failed: {e}")
+            
+            # 2. 检查是否有 Fallback
+            if not self.llm_config_manager:
+                raise e
+            
+            status = await self.llm_config_manager.get_binding_status(channel_id)
+            fallback_binding = status.get("fallback")
+            
+            # 如果没有 Fallback，或者 Fallback 就是刚才试过的那个
+            if not fallback_binding:
+                raise e
+                
+            if (initial_binding["owner_id"] == fallback_binding["owner_id"] and 
+                initial_binding["preset_name"] == fallback_binding["preset_name"]):
+                raise e
+
+            # 3. 尝试 Fallback
+            fallback_preset = await self.llm_config_manager.resolve_preset(fallback_binding)
+            if not fallback_preset:
+                LOG.warning("Fallback binding exists but preset resolution failed")
+                raise e
+                
+            await self.api.post_group_msg(
+                channel_id, 
+                text=f"⚠️ 主力预设调用失败，正在尝试使用保底预设 ({fallback_binding['preset_name']})..."
+            )
+            
+            LOG.info(f"Falling back to preset {fallback_binding['preset_name']} for group {channel_id}")
+            return await self.llm_api.get_completion(messages, preset=fallback_preset)
 
     async def start_new_game(self, group_id: str, user_id: str, system_prompt: str):
         """
@@ -50,6 +130,26 @@ class GameManager:
             )
             return
 
+        # 0. 检查 LLM 绑定
+        preset, binding, error = await self._get_llm_preset(group_id)
+        if not preset or not binding:
+            if error and error.startswith("preset_deleted:"):
+                parts = error.split(":", 2)
+                preset_name = parts[1] if len(parts) > 1 else "未知"
+                preset_owner = parts[2] if len(parts) > 2 else "未知"
+                await self.api.post_group_msg(
+                    group_id, 
+                    text=f"❌ 预设 '{preset_name}' 已被删除，无法开始游戏。\n请重新绑定或联系预设所有者（{preset_owner}）。"
+                )
+            else:
+                await self.api.post_group_msg(
+                    group_id, 
+                    text="❌ 当前群聊未绑定任何 LLM 算力，无法开始游戏。\n请使用 /aigm llm bind 贡献预设，或联系管理员设置保底配置。"
+                )
+            return
+        
+        owner_id = binding["owner_id"]
+
         game_id = None
         try:
             # 1. 在数据库中创建游戏记录
@@ -62,15 +162,18 @@ class GameManager:
                 is_advanced_mode = await self.channel_config.is_advanced_mode_enabled(str(group_id))
 
             # 2. 调用 LLM 获取开场白
+            provider_msg = f"\n⚡️ 算力提供: {owner_id} (Model: {preset['model']})"
             await self.api.post_group_msg(
-                group_id, text="🚀 新游戏即将开始... 正在联系 GM 生成开场白..."
+                group_id, text=f"🚀 新游戏即将开始... 正在联系 GM 生成开场白...{provider_msg}"
             )
+            
             initial_messages: list[ChatCompletionMessageParam] = [
                 {"role": "system", "content": (NSFW_PROMPT if is_advanced_mode else "") + system_prompt},
                 {"role": "user", "content": "开始"},
             ]
-            assistant_response, usage, model_name = await self.llm_api.get_completion(
-                initial_messages
+            
+            assistant_response, usage, model_name = await self._get_completion_with_fallback(
+                initial_messages, group_id, preset, binding
             )
 
             if not assistant_response:
@@ -113,7 +216,7 @@ class GameManager:
             game_id: 要检出的游戏ID。
         """
         if not self.db or not self.db.conn or not self.cache_manager:
-            LOG.error(f"检出 head 失败：组件未初始化。")
+            LOG.error("检出 head 失败：组件未初始化。")
             return
 
         channel_id = None
@@ -157,10 +260,10 @@ class GameManager:
 
             if is_advanced_mode:
                 # 4a. 高级模式：发送 Web UI 链接
-                if not hasattr(self.plugin, 'web_ui') or not self.plugin.web_ui:
+                if not hasattr(self.plugin, 'web_ui'):
                     raise Exception("高级模式需要 Web UI 组件，但该组件未启用。")
 
-                web_ui = self.plugin.web_ui
+                web_ui = getattr(self.plugin, 'web_ui')
                 if not web_ui.tunnel_url:
                     raise Exception("Web UI tunnel 未就绪，无法生成链接。")
 
@@ -176,11 +279,7 @@ class GameManager:
                 )
 
                 # 发送文本消息并获取消息ID
-                message_data = await self.api.post_group_msg(str(channel_id), text=link_message)
-                if message_data and "message_id" in message_data:
-                    main_message_id = message_data["message_id"]
-                elif isinstance(message_data, str):
-                    main_message_id = message_data
+                main_message_id = await self.api.post_group_msg(str(channel_id), text=link_message)
 
                 if not main_message_id:
                     raise Exception("发送剧情链接失败。")
@@ -244,6 +343,7 @@ class GameManager:
         从数据库构建用于 LLM 的对话历史。
         
         使用递归 CTE 一次性获取所有祖先回合，避免 N+1 查询问题。
+        引入内存缓存减少数据库压力，并使用 LRU 策略管理缓存大小。
         
         Args:
             system_prompt: 系统提示词
@@ -254,8 +354,23 @@ class GameManager:
         """
         if not self.db:
             return None
+        
+        cache_key = f"{tip_round_id}:{hash(system_prompt)}:{nsfw_mode}"
+        current_time = time.time()
+        
+        # 1. 检查缓存
+        if cache_key in self._history_cache:
+            messages, timestamp = self._history_cache[cache_key]
+            # 检查是否过期
+            if current_time - timestamp < self._cache_ttl:
+                # 命中缓存，将其移到末尾（标记为最近使用）
+                self._history_cache.move_to_end(cache_key)
+                return messages
+            else:
+                # 已过期，删除
+                del self._history_cache[cache_key]
 
-        # 使用递归 CTE 一次性获取所有历史回合
+        # 2. 查询数据库
         rounds = await self.db.get_round_ancestors(tip_round_id, limit=MAX_HISTORY_ROUNDS)
         
         if not rounds:
@@ -269,6 +384,13 @@ class GameManager:
         for round_data in rounds:
             messages.append({"role": "user", "content": round_data["player_choice"]})
             messages.append({"role": "assistant", "content": round_data["assistant_response"]})
+        
+        # 3. 更新缓存 (LRU 策略)
+        # 如果缓存已满，移除最久未使用的项（第一个项）
+        while len(self._history_cache) >= self._max_cache_size:
+            self._history_cache.popitem(last=False)
+            
+        self._history_cache[cache_key] = (messages, current_time)
         
         return messages
 
@@ -352,17 +474,40 @@ class GameManager:
                 return
             messages.append({"role": "user", "content": winner_content})
 
-            await self.api.post_group_msg(channel_id, text="🛠 GM 正在思考下一步剧情...")
+            # 5. 获取 LLM Preset
+            preset, binding, error = await self._get_llm_preset(channel_id)
+            if not preset or not binding:
+                if error and error.startswith("preset_deleted:"):
+                    parts = error.split(":", 2)
+                    preset_name = parts[1] if len(parts) > 1 else "未知"
+                    preset_owner = parts[2] if len(parts) > 2 else "未知"
+                    await self.api.post_group_msg(
+                        channel_id, 
+                        text=f"❌ 预设 '{preset_name}' 已被删除，游戏中断。\n请重新绑定或联系预设所有者（{preset_owner}）。"
+                    )
+                else:
+                    await self.api.post_group_msg(
+                        channel_id, text="❌ 未找到绑定的 LLM 算力，游戏中断。\n请使用 /aigm llm bind 绑定预设后手动推进。"
+                    )
+                return
 
-            # 5. 调用LLM（可能耗时，在事务外进行）
-            new_assistant_response, usage, model_name = await self.llm_api.get_completion(
-                cast(list[ChatCompletionMessageParam], messages)
+            owner_id = binding["owner_id"]
+            provider_msg = f"\n⚡️ 算力提供: {owner_id} (Model: {preset['model']})"
+            await self.api.post_group_msg(channel_id, text=f"🛠 GM 正在思考下一步剧情...{provider_msg}")
+
+            # 6. 调用LLM（可能耗时，在事务外进行）
+            new_assistant_response, usage, model_name = await self._get_completion_with_fallback(
+                cast(list[ChatCompletionMessageParam], messages),
+                channel_id,
+                preset,
+                binding
             )
+            
             if not new_assistant_response:
                 await self.api.post_group_msg(channel_id, text="GM没有回应，游戏中断。")
                 return
 
-            # 6. 在事务内完成所有更新，使用乐观锁二次验证
+            # 7. 在事务内完成所有更新，使用乐观锁二次验证
             async with self.db.transaction():
                 # 再次获取分支状态，检查是否被并发修改
                 current_branch = await self.db.get_branch_by_id(head_branch_id)
@@ -389,7 +534,7 @@ class GameManager:
                 # 更新分支 tip
                 await self.db.update_branch_tip(head_branch_id, new_round_id)
 
-            # 7. 清理并进入下一轮
+            # 8. 清理并进入下一轮
             await self.cache_manager.clear_group_vote_cache(channel_id)
             await self.checkout_head(game_id)
             

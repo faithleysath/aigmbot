@@ -1,8 +1,10 @@
-import json, re
+import json
+import re
+import shlex
 from datetime import datetime, timezone
 import aiohttp
 
-from ncatbot.core.event import GroupMessageEvent, NoticeEvent
+from ncatbot.core.event import GroupMessageEvent, NoticeEvent, PrivateMessageEvent
 from ncatbot.core.event.message_segment import File, Reply, At
 from ncatbot.plugin_system import NcatBotPlugin
 from ncatbot.utils import get_log
@@ -15,6 +17,7 @@ from .utils import EMOJI, bytes_to_base64
 from .content_fetcher import ContentFetcher
 from .commands import CommandHandler
 from .channel_config import ChannelConfigManager
+from .llm_config import LLMConfigManager
 
 LOG = get_log(__name__)
 
@@ -29,7 +32,8 @@ class EventHandler:
         renderer: MarkdownRenderer,
         content_fetcher: ContentFetcher,
         command_handler: CommandHandler,
-        channel_config: ChannelConfigManager
+        channel_config: ChannelConfigManager,
+        llm_config_manager: LLMConfigManager | None = None
     ):
         self.plugin = plugin
         self.api = plugin.api
@@ -41,6 +45,7 @@ class EventHandler:
         self.content_fetcher = content_fetcher
         self.command_handler = command_handler
         self.channel_config = channel_config
+        self.llm_config_manager = llm_config_manager
 
     async def handle_group_message(self, event: GroupMessageEvent):
         """处理群聊消息，包括文件上传启动和自定义输入"""
@@ -62,6 +67,77 @@ class EventHandler:
         if reply_segments:
             await self._handle_custom_input(event, reply_segments[0])
             return
+
+    async def handle_private_message(self, event: PrivateMessageEvent):
+        """处理私聊消息命令"""
+        content = event.raw_message.strip()
+        
+        try:
+            # /aigm llm add <name> <model> <base_url> <api_key> [--force]
+            if content.startswith("/aigm llm add"):
+                parts = shlex.split(content)
+                
+                # Check for --force flag
+                force = False
+                if "--force" in parts:
+                    force = True
+                    parts.remove("--force")
+                
+                if len(parts) != 7:
+                    await event.reply("❌ 格式错误。请使用: /aigm llm add <name> <model> <base_url> <api_key> [--force]")
+                    return
+                
+                await self.command_handler.handle_llm_add(event, parts[3], parts[4], parts[5], parts[6], force=force)
+                return
+
+            # /aigm llm remove <name>
+            if content.startswith("/aigm llm remove"):
+                parts = shlex.split(content)
+                if len(parts) != 4:
+                    await event.reply("❌ 格式错误。请使用: /aigm llm remove <name>")
+                    return
+                await self.command_handler.handle_llm_remove(event, parts[3])
+                return
+
+            # /aigm llm test <name>
+            if content.startswith("/aigm llm test"):
+                parts = shlex.split(content)
+                if len(parts) != 4:
+                    await event.reply("❌ 格式错误。请使用: /aigm llm test <name>")
+                    return
+                await self.command_handler.handle_llm_test(event, parts[3])
+                return
+
+            # /aigm llm list (status)
+            if content.startswith("/aigm llm list") or content.startswith("/aigm llm status"):
+                await self.command_handler.handle_llm_status(event)
+                return
+
+            # 默认提示
+            if content.startswith("/aigm"):
+                await event.reply(
+                    "🤖 AI GM 私聊助手\n\n"
+                    "📋 可用命令:\n\n"
+                    "• /aigm llm add <name> <model> <base_url> <api_key>\n"
+                    "  添加新的 LLM 预设配置\n"
+                    "  示例: /aigm llm add gpt4 gpt-4-turbo https://api.openai.com/v1 sk-xxx\n\n"
+                    "• /aigm llm remove <name>\n"
+                    "  删除已保存的预设（正在使用的预设无法删除）\n"
+                    "  示例: /aigm llm remove gpt4\n\n"
+                    "• /aigm llm test <name>\n"
+                    "  测试指定预设的连接性\n"
+                    "  示例: /aigm llm test gpt4\n\n"
+                    "• /aigm llm list\n"
+                    "  查看您的所有 LLM 预设\n\n"
+                    "💡 使用技巧:\n"
+                    "- 如果参数包含空格，请使用引号包裹\n"
+                    "  例如: /aigm llm add \"my preset\" gpt-4 \"https://api.example.com\" sk-xxx\n"
+                    "- 在群聊中使用 /aigm llm bind <name> 来贡献算力\n"
+                    "- 管理员可以设置保底预设: /aigm llm set-fallback <name>"
+                )
+        except ValueError as e:
+             await event.reply(f"❌ 参数解析错误: {e}\n提示: 如果参数包含空格，请使用引号包裹。")
+             return
 
     async def _handle_file_upload(self, event: GroupMessageEvent, file: File):
         """处理.txt或.md文件上传，作为开启游戏的入口"""
@@ -109,9 +185,12 @@ class EventHandler:
                     "create_time": datetime.now(timezone.utc),
                 },
             )
+        except aiohttp.ClientError as e:
+            LOG.error(f"下载文件失败: {e}", exc_info=True)
+            await event.reply("无法下载文件，请稍后重试。", at=False)
         except Exception as e:
             LOG.error(f"处理文件消息时出错: {e}", exc_info=True)
-            await event.reply("处理文件时出错。", at=False)
+            await event.reply("处理文件时发生意外错误。", at=False)
 
     async def _handle_custom_input(self, event: GroupMessageEvent, reply: Reply):
         """处理对主消息的回复，作为自定义输入"""
@@ -281,7 +360,7 @@ class EventHandler:
             await self.api.post_group_msg(
                 group_id,
                 text="\n".join(result_lines)
-                + f"\n由于一位管理员/主持人的反对票，本轮投票并未获通过，将重新开始本轮。",
+                + "\n由于一位管理员/主持人的反对票，本轮投票并未获通过，将重新开始本轮。",
                 reply=main_message_id,
             )
             if self.cache_manager:
