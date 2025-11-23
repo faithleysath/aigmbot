@@ -214,11 +214,15 @@ class AIGMPlugin(NcatBotPlugin):
         """插件关闭时执行的操作"""
         # 0. 停止清理任务
         if hasattr(self, '_cleanup_task'):
-            self._cleanup_task.cancel()
             try:
-                await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
+                self._cleanup_task.cancel()
+                try:
+                    await self._cleanup_task
+                except asyncio.CancelledError:
+                    pass
+            except RuntimeError:
+                # 事件循环已关闭，任务会被自动清理
+                LOG.debug("清理任务在事件循环关闭后被取消")
             
         # 1. 停止 Web UI 服务器
         if self.web_ui:
