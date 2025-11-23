@@ -1181,15 +1181,16 @@ class CommandHandler:
             await event.reply("当前没有 Active 绑定。", at=False)
             return
 
-        # 权限检查：所有者 或 管理员
+        # 权限检查：所有者 或 管理员 或 游戏主持人
         is_owner = active["owner_id"] == user_id
-        is_admin = self._check_has_root_or_admin(user_id, event.sender.role)
+        # 复用 check_channel_permission，它包含了 Root、群管理员和游戏主持人的检查
+        has_permission = await self.check_channel_permission(user_id, group_id, event.sender.role)
         
-        if is_owner or is_admin:
+        if is_owner or has_permission:
             await self.llm_config_manager.unbind_active(group_id)
             await event.reply("✅ 已解除 Active 绑定。", at=False)
         else:
-            await event.reply("❌ 权限不足：只能解除自己绑定的预设，管理员除外。", at=False)
+            await event.reply("❌ 权限不足：只能解除自己绑定的预设，管理员和当前游戏主持人除外。", at=False)
 
     async def handle_llm_set_fallback(self, event: GroupMessageEvent, preset_name: str):
         """处理 /aigm llm set-fallback 指令 (仅管理员)"""
