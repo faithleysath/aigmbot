@@ -227,6 +227,13 @@ class AIGMPlugin(NcatBotPlugin):
         # 1. 停止 Web UI 服务器
         if self.web_ui:
             self.web_ui.stop_server()
+            # 显式关闭 WebUI 的数据库连接
+            if self.web_ui.db:
+                try:
+                    await self.web_ui.db.close()
+                    LOG.info("WebUI 数据库连接已关闭")
+                except Exception as e:
+                    LOG.error(f"关闭 WebUI 数据库失败: {e}")
         
         # 2. 停止 Flare tunnel（如果存在）
         if self.web_ui and self.web_ui.tunnel:
