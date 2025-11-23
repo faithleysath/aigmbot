@@ -1,6 +1,6 @@
 import json
 import time
-from typing import cast
+from typing import cast, TYPE_CHECKING
 from collections import OrderedDict
 from ncatbot.utils import get_log
 from ncatbot.plugin_system import NcatBotPlugin
@@ -14,6 +14,9 @@ from .exceptions import TipChangedError, GameFrozenError
 from .constants import MAX_HISTORY_ROUNDS, NSFW_PROMPT
 from .channel_config import ChannelConfigManager
 from .llm_config import LLMConfigManager, LLMPreset, BindingInfo
+
+if TYPE_CHECKING:
+    from .web_ui import WebUI
 
 LOG = get_log(__name__)
 
@@ -260,10 +263,13 @@ class GameManager:
 
             if is_advanced_mode:
                 # 4a. 高级模式：发送 Web UI 链接
-                if not hasattr(self.plugin, 'web_ui'):
+                web_ui = getattr(self.plugin, 'web_ui', None)
+                if web_ui is None:
                     raise Exception("高级模式需要 Web UI 组件，但该组件未启用。")
+                
+                if TYPE_CHECKING:
+                    web_ui = cast(WebUI, web_ui)
 
-                web_ui = getattr(self.plugin, 'web_ui')
                 if not web_ui.tunnel_url:
                     raise Exception("Web UI tunnel 未就绪，无法生成链接。")
 

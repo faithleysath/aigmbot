@@ -2,12 +2,11 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import aiofiles
-import aiofiles.os as aio_os
 from typing import TypedDict, NotRequired
 import asyncio
 
 from ncatbot.utils import get_log
-from .constants import CACHE_SAVE_DELAY_SECONDS
+from .constants import CACHE_SAVE_DELAY_SECONDS, WEB_START_TOKEN_TIMEOUT
 
 LOG = get_log(__name__)
 
@@ -22,6 +21,7 @@ class CacheManager:
     def __init__(self, cache_path: Path):
         self.cache_path = cache_path
         self.pending_new_games: dict[str, dict] = {}
+        self.web_start_tokens: dict[str, dict] = {}  # token -> {group_id, user_id, created_at}
         self.vote_cache: dict[str, dict[str, VoteCacheItem]] = {}
         self._io_lock = asyncio.Lock()
         self._cache_lock = asyncio.Lock()  # 保护内存缓存并发
@@ -74,6 +74,68 @@ class CacheManager:
 
         await self.save_to_disk(force=True)
         return expired_ids
+
+    # --- Web Start Tokens ---
+    def _cleanup_expired_tokens_unsafe(self, timeout_seconds: int) -> list[str]:
+        """不加锁的清理逻辑，调用者需持有 _cache_lock"""
+        now = datetime.now(timezone.utc)
+        expired = []
+        for token, data in self.web_start_tokens.items():
+            created_at = data.get("created_at")
+            if (
+                isinstance(created_at, datetime)
+                and (now - created_at).total_seconds() > timeout_seconds
+            ):
+                expired.append(token)
+
+        for token in expired:
+            self.web_start_tokens.pop(token, None)
+
+        return expired
+
+    async def add_web_start_token(self, token: str, group_id: str, user_id: str):
+        """添加一个新的 Web 启动令牌"""
+        async with self._cache_lock:
+            # 1. 顺便清理过期令牌
+            expired = self._cleanup_expired_tokens_unsafe(WEB_START_TOKEN_TIMEOUT)
+            if expired:
+                LOG.debug(f"清理了 {len(expired)} 个过期的 Web 启动令牌")
+
+            # 2. 添加新令牌
+            self.web_start_tokens[token] = {
+                "group_id": group_id,
+                "user_id": user_id,
+                "created_at": datetime.now(timezone.utc),
+            }
+
+        # 3. 统一保存 (移到锁外)
+        # Web token 仅存在于内存中，不持久化到磁盘
+        # await self.save_to_disk()
+
+    async def get_web_start_token(self, token: str) -> dict | None:
+        """获取令牌信息（不删除）"""
+        async with self._cache_lock:
+            return self.web_start_tokens.get(token)
+
+    async def consume_web_start_token(self, token: str) -> dict | None:
+        """获取并删除令牌（一次性使用）"""
+        async with self._cache_lock:
+            data = self.web_start_tokens.pop(token, None)
+        
+        # Web token 不持久化，无需保存
+        return data
+
+    async def cleanup_expired_web_tokens(self, timeout_seconds: int = WEB_START_TOKEN_TIMEOUT):
+        """清理过期的 Web 启动令牌 (默认10分钟)"""
+        should_save = False
+        async with self._cache_lock:
+            expired = self._cleanup_expired_tokens_unsafe(timeout_seconds)
+            if expired:
+                LOG.debug(f"清理了 {len(expired)} 个过期的 Web 启动令牌")
+                should_save = True
+        
+        if should_save:
+            await self.save_to_disk()
 
     # --- Vote Cache ---
     async def _maybe_cleanup_votes(self):
@@ -241,6 +303,9 @@ class CacheManager:
                         if "create_time" in game and isinstance(game["create_time"], str):
                             game["create_time"] = datetime.fromisoformat(game["create_time"])
 
+                    # web_start_tokens 不再持久化，启动时为空
+                    web_start_tokens_restored = {}
+
                     raw_vote_cache = payload.get("vote_cache", {})
                     vote_cache_restored: dict[str, dict[str, VoteCacheItem]] = {}
                     for group_id, messages in raw_vote_cache.items():
@@ -259,6 +324,7 @@ class CacheManager:
 
                     # 直接更新内存状态（已在 _cache_lock 保护下）
                     self.pending_new_games = pending_new_games_restored
+                    self.web_start_tokens = web_start_tokens_restored
                     self.vote_cache = vote_cache_restored
 
                 except Exception as e:
@@ -313,6 +379,7 @@ class CacheManager:
 
             data = {
                 "pending_new_games": serializable_pending,
+                # "web_start_tokens": serializable_tokens,  # Token 仅存在于内存中，不持久化
                 "vote_cache": serializable_votes,
             }
 

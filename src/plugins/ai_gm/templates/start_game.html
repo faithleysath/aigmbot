@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI GM - 启动新游戏</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+            line-height: 1.6;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .container {
+            background-color: #2d2d2d;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        h1 {
+            color: #ffffff;
+            border-bottom: 2px solid #4a4a4a;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        textarea {
+            width: 100%;
+            height: 300px;
+            padding: 12px;
+            border-radius: 4px;
+            border: 1px solid #4a4a4a;
+            background-color: #363636;
+            color: #e0e0e0;
+            font-family: monospace;
+            font-size: 14px;
+            resize: vertical;
+            box-sizing: border-box;
+        }
+        textarea:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+        }
+        .info {
+            background-color: #1e3a5f;
+            border-left: 4px solid #007bff;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 0 4px 4px 0;
+        }
+        .error {
+            background-color: #5a1e1e;
+            border-left: 4px solid #dc3545;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 0 4px 4px 0;
+            display: none;
+        }
+        .success {
+            background-color: #1e5a2e;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 0 4px 4px 0;
+            display: none;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>启动新游戏</h1>
+        
+        <div id="status-message" class="info">
+            请在下方输入您的剧本（System Prompt）。提交后，Bot 将在群聊中生成预览并等待确认。
+        </div>
+
+        <div id="error-message" class="error"></div>
+        
+        <div id="success-message" class="success">
+            <h2>✅ 提交成功！</h2>
+            <p>Bot 已在群聊中发送了剧本预览。</p>
+            <p>请返回 QQ 群并点击 🎉 表情确认开始游戏。</p>
+            <p>您可以关闭此页面了。</p>
+        </div>
+
+        <form id="start-form">
+            <input type="hidden" id="token" value="{{ token }}">
+            
+            <div class="form-group">
+                <label for="system-prompt">剧本内容 (System Prompt):</label>
+                <textarea id="system-prompt" name="system_prompt" placeholder="请输入游戏的设定、背景故事、世界观规则等..." required></textarea>
+                <div id="char-count" style="text-align: right; font-size: 0.9em; color: #aaa; margin-top: 5px;">0 / {{ max_length }}</div>
+            </div>
+            
+            <button type="submit" id="submit-btn">提交剧本</button>
+        </form>
+    </div>
+
+    <script>
+        // 字符计数
+        const textarea = document.getElementById('system-prompt');
+        const charCount = document.getElementById('char-count');
+        const maxLength = parseInt('{{ max_length }}', 10);
+
+        function updateCharCount() {
+            const length = textarea.value.length;
+            charCount.textContent = `${length} / ${maxLength}`;
+            if (length > maxLength) {
+                charCount.style.color = '#dc3545'; // Red for warning
+            } else {
+                charCount.style.color = '#aaa';
+            }
+        }
+
+        textarea.addEventListener('input', updateCharCount);
+        // 初始化调用
+        updateCharCount();
+
+        // 辅助功能：下载内容
+        window.downloadContent = function() {
+            const content = document.getElementById('system-prompt').value;
+            if (!content) return;
+            const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `aigm_script_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // 辅助功能：复制内容
+        window.copyContent = function() {
+            const content = document.getElementById('system-prompt').value;
+            if (!content) return;
+            navigator.clipboard.writeText(content).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✅ 已复制';
+                setTimeout(() => btn.textContent = originalText, 2000);
+            }).catch(err => {
+                alert('复制失败，请手动选择文本复制');
+            });
+        }
+
+        document.getElementById('start-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const submitBtn = document.getElementById('submit-btn');
+            const systemPrompt = document.getElementById('system-prompt').value;
+            const token = document.getElementById('token').value;
+            const errorDiv = document.getElementById('error-message');
+            const successDiv = document.getElementById('success-message');
+            const form = document.getElementById('start-form');
+            const statusDiv = document.getElementById('status-message');
+            const textarea = document.getElementById('system-prompt');
+
+            if (!systemPrompt.trim()) {
+                errorDiv.textContent = "剧本内容不能为空";
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = '提交中...';
+            errorDiv.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/game/start', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        token: token,
+                        system_prompt: systemPrompt
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // 成功处理：保留表单显示但禁用，以供查看
+                    statusDiv.style.display = 'none';
+                    successDiv.style.display = 'block';
+                    
+                    textarea.disabled = true;
+                    submitBtn.style.display = 'none'; // 隐藏提交按钮
+
+                    // 在成功信息中也提供备份选项
+                    successDiv.innerHTML += `
+                        <div style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 15px;">
+                            <button onclick="downloadContent()" style="background-color: #218838; font-size: 14px; padding: 8px 16px;">📥 下载剧本备份</button>
+                        </div>
+                    `;
+                    
+                    // 滚动到顶部
+                    window.scrollTo(0, 0);
+                } else {
+                    throw { message: data.detail || '提交失败', status: response.status };
+                }
+            } catch (error) {
+                // 错误处理
+                const isConflict = error.status === 409;
+                
+                errorDiv.style.display = 'block';
+                errorDiv.innerHTML = `
+                    <h3>❌ 提交失败</h3>
+                    <p>${error.message || error}</p>
+                    <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid rgba(255,0,0,0.2);">
+                        <p style="font-size: 0.9em; margin-bottom: 10px; opacity: 0.9;">建议您先保存剧本：</p>
+                        <button type="button" onclick="downloadContent()" style="background-color: #17a2b8; margin-right: 10px;">📥 下载剧本</button>
+                        <button type="button" onclick="copyContent()" style="background-color: #6c757d;">📋 复制内容</button>
+                    </div>
+                `;
+
+                if (isConflict) {
+                    // 如果是冲突（已有游戏），禁用提交但保留内容
+                    submitBtn.disabled = true;
+                    submitBtn.textContent = '无法提交 (游戏已在运行)';
+                    submitBtn.style.backgroundColor = '#555';
+                } else {
+                    // 其他错误允许重试
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = '重试提交';
+                }
+                
+                // 滚动到错误信息
+                errorDiv.scrollIntoView({ behavior: 'smooth' });
+            }
+        });
+    </script>
+</body>
+</html>

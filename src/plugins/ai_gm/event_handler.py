@@ -139,35 +139,42 @@ class EventHandler:
              await event.reply(f"❌ 参数解析错误: {e}\n提示: 如果参数包含空格，请使用引号包裹。")
              return
 
-    async def _handle_file_upload(self, event: GroupMessageEvent, file: File):
-        """处理.txt或.md文件上传，作为开启游戏的入口"""
+    async def process_system_prompt(self, group_id: str, user_id: str, system_prompt: str, reply_to_msg_id: str | None = None) -> tuple[bool, str]:
+        """
+        处理新的剧本（System Prompt），发送预览并进入确认流程。
+        
+        Args:
+            group_id: 群组ID
+            user_id: 提交用户ID
+            system_prompt: 剧本内容
+            reply_to_msg_id: 可选，回复的消息ID
+            
+        Returns:
+            tuple[bool, str]: (是否成功, 错误信息/成功提示)
+        """
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(file.url) as response:
-                    if response.status != 200:
-                        await event.reply("无法获取文件内容。", at=False)
-                        return
-                    content = await response.text()
-
-            preview = content[:2000] # 预览前2000字符
+            preview = system_prompt[:2000] # 预览前2000字符
             img: bytes | None = None
             if self.renderer:
                 img = await self.renderer.render_markdown(preview)
 
             reply_message_id = None
             if img:
-                reply_message_id = await event.reply(
-                    image=f"data:image/png;base64,{bytes_to_base64(img)}", at=False
+                reply_message_id = await self.api.post_group_file(
+                    group_id,
+                    image=f"data:image/png;base64,{bytes_to_base64(img)}",
                 )
             else:
-                reply_message_id = await event.reply(
-                    f"文件预览:\n\n{preview}", at=False
+                reply_message_id = await self.api.post_group_msg(
+                    group_id,
+                    text=f"文件预览:\n\n{preview}",
+                    reply=reply_to_msg_id
                 )
 
             if not reply_message_id:
-                return
+                return False, "无法发送预览消息到群聊"
 
-            if self.db and await self.db.is_game_running(str(event.group_id)):
+            if self.db and await self.db.is_game_running(group_id):
                 await self.api.set_msg_emoji_like(
                     reply_message_id, str(EMOJI["COFFEE"])
                 )  # 频道繁忙
@@ -179,12 +186,37 @@ class EventHandler:
             await self.cache_manager.add_pending_game(
                 str(reply_message_id),
                 {
-                    "user_id": event.user_id,
-                    "system_prompt": content,
-                    "message_id": event.message_id,
+                    "user_id": user_id,
+                    "system_prompt": system_prompt,
+                    "message_id": reply_to_msg_id, # origin message (optional)
                     "create_time": datetime.now(timezone.utc),
                 },
             )
+            return True, "成功发起确认流程"
+        except Exception as e:
+            LOG.error(f"处理剧本时出错: {e}", exc_info=True)
+            return False, str(e)
+
+    async def _handle_file_upload(self, event: GroupMessageEvent, file: File):
+        """处理.txt或.md文件上传，作为开启游戏的入口"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(file.url) as response:
+                    if response.status != 200:
+                        await event.reply("无法获取文件内容。", at=False)
+                        return
+                    content = await response.text()
+            
+            success, error_msg = await self.process_system_prompt(
+                str(event.group_id),
+                str(event.user_id),
+                content,
+                str(event.message_id)
+            )
+            
+            if not success:
+                await event.reply(f"❌ 处理文件失败: {error_msg}", at=False)
+                
         except aiohttp.ClientError as e:
             LOG.error(f"下载文件失败: {e}", exc_info=True)
             await event.reply("无法下载文件，请稍后重试。", at=False)

@@ -8,6 +8,13 @@ from ncatbot.utils import get_log
 import json
 import re
 import time
+import uuid
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from .main import AIGMPlugin
+    from .event_handler import EventHandler
+    from .llm_api import LLM_API
 
 from .db import Database
 from .game_manager import GameManager
@@ -501,6 +508,61 @@ class CommandHandler:
             LOG.error(f"获取游戏列表失败: {e}", exc_info=True)
             await event.reply("❌ 获取游戏列表失败，请联系管理员。", at=False)
 
+    async def handle_game_start(self, event: GroupMessageEvent, system_prompt: str = ""):
+        """处理 /aigm start [system_prompt] 命令"""
+        group_id = str(event.group_id)
+        user_id = str(event.user_id)
+
+        # 1. 权限检查
+        # 如果已有游戏运行，则不允许启动新游戏
+        if await self.db.is_game_running(group_id):
+            await event.reply("当前频道已有正在进行的游戏。请先结束或 detach 当前游戏。", at=False)
+            return
+
+        # 2. 处理 System Prompt
+        if system_prompt:
+            # 直接启动模式
+            # 显式转换类型以通过静态检查
+            if TYPE_CHECKING:
+                plugin = cast(AIGMPlugin, self.plugin)
+            else:
+                plugin = self.plugin
+
+            event_handler = getattr(plugin, 'event_handler', None)
+            if event_handler is None:
+                await event.reply("❌ 插件未完全初始化。", at=False)
+                return
+            
+            if TYPE_CHECKING:
+                event_handler = cast(EventHandler, event_handler)
+                
+            success, error_msg = await event_handler.process_system_prompt(
+                group_id,
+                user_id,
+                system_prompt,
+                str(event.message_id)
+            )
+            if not success:
+                # 详细错误已经在 process_system_prompt 中记录到日志，但我们也返回给用户
+                await event.reply(f"❌ 处理剧本失败: {error_msg}", at=False)
+        else:
+            # Web UI 启动模式
+            if not self.web_ui or not self.web_ui.tunnel_url:
+                await event.reply("❌ Web UI 未启用或 Tunnel 未就绪，无法使用网页启动功能。\n请尝试直接附带剧本: /aigm start <剧本内容>", at=False)
+                return
+
+            # 生成一次性 Token
+            token = str(uuid.uuid4())
+            await self.cache_manager.add_web_start_token(token, group_id, user_id)
+            
+            start_url = f"{self.web_ui.tunnel_url}/game/start?token={token}"
+            
+            await event.reply(
+                f"🚀 请点击下方链接进入网页端输入剧本：\n{start_url}\n\n"
+                f"💡 链接有效期 10 分钟，提交后请在群内确认。",
+                at=False
+            )
+
     async def handle_game_attach(self, event: GroupMessageEvent, game_id: int):
         """处理 /aigm game attach <id> 命令"""
         try:
@@ -921,6 +983,9 @@ class CommandHandler:
         await event.reply(f"🔍 正在测试预设 '{name}' 的连接性...")
         
         llm_api = getattr(self.plugin, 'llm_api', None)
+        if TYPE_CHECKING:
+            llm_api = cast(LLM_API | None, llm_api)
+
         is_valid, error_msg = await self.llm_config_manager.test_preset(preset, llm_api)
         
         if is_valid or force:
@@ -988,6 +1053,9 @@ class CommandHandler:
         await event.reply(f"🔍 正在测试预设 '{name}'...\n模型: {preset['model']}\nBase URL: {preset['base_url']}")
         
         llm_api = getattr(self.plugin, 'llm_api', None)
+        if TYPE_CHECKING:
+            llm_api = cast(LLM_API | None, llm_api)
+
         is_valid, error_msg = await self.llm_config_manager.test_preset(preset, llm_api)
         
         if is_valid:

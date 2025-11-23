@@ -11,14 +11,25 @@ from ncatbot.utils import get_log
 from markupsafe import Markup
 from markdown_it import MarkdownIt
 
+from typing import TYPE_CHECKING
+from pydantic import BaseModel
 from .db import Database
+from .constants import MAX_SYSTEM_PROMPT_LENGTH
+
+if TYPE_CHECKING:
+    from .main import AIGMPlugin
 
 LOG = get_log(__name__)
 
+class SystemPromptRequest(BaseModel):
+    token: str
+    system_prompt: str
+
 class WebUI:
-    def __init__(self, db_path: str, plugin_data_path: Path):
+    def __init__(self, db_path: str, plugin_data_path: Path, plugin: "AIGMPlugin | None" = None):
         self.db_path = db_path
         self.db: Database | None = None
+        self.plugin = plugin
         self.plugin_data_path = plugin_data_path
         self.app = FastAPI(lifespan=self.lifespan)
         self.templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -54,6 +65,8 @@ class WebUI:
 
     def _setup_routes(self):
         self.app.add_api_route("/", self.route_game_list, methods=["GET"], response_class=HTMLResponse)
+        self.app.add_api_route("/game/start", self.route_start_game_page, methods=["GET"], response_class=HTMLResponse)
+        self.app.add_api_route("/api/game/start", self.route_submit_system_prompt, methods=["POST"], response_class=JSONResponse)
         self.app.add_api_route("/game/{game_id}", self.route_game_detail, methods=["GET"], response_class=HTMLResponse)
         self.app.add_api_route("/game/{game_id}/branch/{branch_name}/history", self.route_branch_history, methods=["GET"], response_class=HTMLResponse)
         self.app.add_api_route("/game/{game_id}/round/{round_id}", self.route_round_detail, methods=["GET"], response_class=HTMLResponse)
@@ -293,3 +306,89 @@ class WebUI:
         except Exception as e:
             LOG.error(f"Error fetching graph data for game {game_id}: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error")
+
+    async def route_start_game_page(self, request: Request, token: str):
+        """渲染启动新游戏页面，验证并消费 token"""
+        if not self.plugin or not self.plugin.cache_manager:
+            raise HTTPException(status_code=503, detail="Plugin not initialized")
+
+        # 消费 token，防止重复使用
+        token_data = await self.plugin.cache_manager.consume_web_start_token(token)
+        if not token_data:
+            return HTMLResponse(content="<h1>链接已失效或已被使用</h1><p>请在群聊中重新使用 /aigm start 命令获取新链接。</p>", status_code=403)
+        
+        # 将必要信息嵌入页面，但不直接暴露在 URL 中
+        # 注意：这里我们只传递 token 给前端作为一种简单的会话标识（尽管它已经从后端缓存中移除），
+        # 实际提交时我们需要一种方式来验证身份。
+        # 由于 consume_web_start_token 已经移除了 token，我们需要生成一个新的临时凭证或者
+        # 直接在渲染页面时将 group_id 和 user_id 嵌入到表单中（加密或签名会更安全，但这里简化处理，
+        # 假设短时间内不会被篡改，且主要依赖一次性链接的安全性）。
+        # 
+        # 为了安全性，我们在 consume 后生成一个短期有效的 submit_token 存入内存，
+        # 或者简单地：由于是前后端分离的 API 调用，我们需要在服务端保持这个状态。
+        # 
+        # 修正方案：
+        # 1. route_start_game_page 消费 URL token。
+        # 2. 生成一个新的、仅用于提交的 session token (submit_token)，存入 cache。
+        # 3. 将 submit_token 传给前端。
+        # 4. 前端提交时带上 submit_token。
+        
+        # 生成提交专用的临时 token (有效期较短，例如 30 分钟，足够填完表单)
+        import secrets
+        submit_token = secrets.token_urlsafe(32)
+        await self.plugin.cache_manager.add_web_start_token(submit_token, token_data["group_id"], token_data["user_id"])
+        
+        return self.templates.TemplateResponse("start_game.html", {
+            "request": request, 
+            "token": submit_token,
+            "max_length": MAX_SYSTEM_PROMPT_LENGTH
+        })
+
+    async def route_submit_system_prompt(self, request: SystemPromptRequest):
+        """处理 Web 端提交的剧本"""
+        # 输入验证
+        if not request.system_prompt or not request.system_prompt.strip():
+            raise HTTPException(status_code=400, detail="剧本内容不能为空")
+        
+        if len(request.system_prompt) > MAX_SYSTEM_PROMPT_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"剧本内容过长 (最大 {MAX_SYSTEM_PROMPT_LENGTH} 字符)",
+            )
+
+        if not self.plugin or not self.plugin.cache_manager or not self.plugin.event_handler or not self.db:
+            raise HTTPException(status_code=503, detail="系统服务未完全初始化")
+
+        # 消费 token (立即消费以防止竞态条件)
+        token_data = await self.plugin.cache_manager.consume_web_start_token(request.token)
+        if not token_data:
+            raise HTTPException(status_code=403, detail="会话已过期或提交令牌无效，请重新获取链接")
+
+        group_id = token_data.get("group_id")
+        user_id = token_data.get("user_id")
+
+        if not group_id or not user_id:
+            LOG.error(f"Invalid token data: {token_data}")
+            raise HTTPException(status_code=500, detail="Invalid session data")
+        
+        # 业务逻辑检查：检查群组是否已有游戏运行
+        if await self.db.is_game_running(group_id):
+            # 虽然 Token 已消费，但业务规则阻止了操作。
+            # 用户需要重新生成链接，这是为了安全性的权衡。
+            raise HTTPException(status_code=409, detail="当前群组已有正在进行的游戏，无法启动新游戏")
+
+        # 调用 EventHandler 处理剧本
+        try:
+            success, error_msg = await self.plugin.event_handler.process_system_prompt(
+                group_id, 
+                user_id, 
+                request.system_prompt
+            )
+
+            if success:
+                return JSONResponse(content={"status": "success"})
+            else:
+                raise HTTPException(status_code=500, detail=f"处理剧本失败: {error_msg}")
+        except Exception as e:
+            LOG.error(f"Error processing system prompt via WebUI: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"服务器内部错误: {str(e)}")

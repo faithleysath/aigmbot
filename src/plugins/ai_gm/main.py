@@ -109,8 +109,11 @@ class AIGMPlugin(NcatBotPlugin):
         self.cache_manager = CacheManager(cache_path)
         await self.cache_manager.load_from_disk()
 
+        # 启动定期清理任务
+        self._start_cleanup_tasks()
+
         if self.db and self.llm_api and self.renderer and self.cache_manager:
-            self.web_ui = WebUI(str(db_path), data_dir)
+            self.web_ui = WebUI(str(db_path), data_dir, plugin=self)
             
             # 在后台线程启动 Flare tunnel
             LOG.info("Starting Flare tunnel...")
@@ -177,6 +180,26 @@ class AIGMPlugin(NcatBotPlugin):
 
         LOG.info(f"[{self.name}] 加载完成。")
 
+    def _start_cleanup_tasks(self):
+        """启动定期清理任务"""
+        if not self.cache_manager:
+            return
+
+        async def _cleanup_tokens():
+            while True:
+                try:
+                    await asyncio.sleep(600)  # 每10分钟
+                    if self.cache_manager:
+                        await self.cache_manager.cleanup_expired_web_tokens()
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    LOG.error(f"清理过期 Token 失败: {e}", exc_info=True)
+                    await asyncio.sleep(60) # 出错后等待1分钟再重试
+
+        self._cleanup_task = asyncio.create_task(_cleanup_tokens())
+        LOG.info("已启动 Token 定期清理任务")
+
     async def _safe_shutdown(self, coro, name: str, timeout: float = 5.0):
         """辅助方法：带超时保护的安全关闭"""
         try:
@@ -189,6 +212,14 @@ class AIGMPlugin(NcatBotPlugin):
 
     async def on_close(self):
         """插件关闭时执行的操作"""
+        # 0. 停止清理任务
+        if hasattr(self, '_cleanup_task'):
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
+            
         # 1. 停止 Web UI 服务器
         if self.web_ui:
             self.web_ui.stop_server()
@@ -268,6 +299,11 @@ class AIGMPlugin(NcatBotPlugin):
     async def aigm_webui(self, event: GroupMessageEvent):
         if self.command_handler:
             await self.command_handler.handle_webui(event)
+
+    @aigm_group.command("start", description="启动新游戏")
+    async def aigm_start(self, event: GroupMessageEvent, system_prompt: str = ""):
+        if self.command_handler:
+            await self.command_handler.handle_game_start(event, system_prompt)
 
     # --- Branch Subcommands ---
     branch_group = aigm_group.group("branch", description="分支管理")

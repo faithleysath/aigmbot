@@ -21,6 +21,10 @@ MAX_CONCURRENT_RENDERS = 3  # 最大并发渲染数量
 # 命令相关
 HISTORY_MAX_LIMIT = 10  # 历史记录显示的默认/最大条数
 
+# Web UI 相关
+WEB_START_TOKEN_TIMEOUT = 600  # Web 启动令牌有效期（秒）
+MAX_SYSTEM_PROMPT_LENGTH = 500000  # 剧本最大长度（字符）
+
 # 表情 ID
 EMOJI = {
     # 主贴选项
