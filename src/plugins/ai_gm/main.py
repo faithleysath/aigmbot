@@ -248,13 +248,13 @@ class AIGMPlugin(NcatBotPlugin):
                 timeout=3.0
             )
             
-        # 5. 关闭渲染器（带超时保护）
-        if self.renderer:
-            await self._safe_shutdown(
-                self.renderer.close(),
-                "Markdown渲染器",
-                timeout=5.0
-            )
+        # # 5. 关闭渲染器（带超时保护）
+        # if self.renderer:
+        #     await self._safe_shutdown(
+        #         self.renderer.close(),
+        #         "Markdown渲染器",
+        #         timeout=5.0
+        #     )
 
         LOG.info(f"[{self.name}] 已卸载。")
 
