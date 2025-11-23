@@ -224,35 +224,45 @@ class MarkdownRenderer:
             <head>
                 <meta charset="UTF-8">
                 <style>
+                    :root {{
+                        --bg-color: #121212;
+                        --text-color: #e0e0e0;
+                        --primary-color: #bb86fc;
+                        --secondary-color: #03dac6;
+                        --surface-color: #1e1e1e;
+                        --border-color: #333;
+                    }}
+
                     body {{
-                        position: relative; /* 为绝对定位的子元素提供容器 */
+                        position: relative;
                         /* 最终渲染宽度 */
                         width: {RENDER_WIDTH}px;
-                        box-sizing: border-box; /* 确保 padding 不会撑大宽度 */
+                        box-sizing: border-box;
 
-                        /* 暗色主题 */
-                        background-color: #1B1C1D;
-                        color: #ffffff;
+                        /* 背景色 */
+                        background-color: var(--bg-color);
+                        color: var(--text-color);
 
-                        /* 舒适的内边距 */
+                        /* 内边距 */
                         padding: {RENDER_PADDING}px;
-                        padding-top: {RENDER_TOP_PADDING}px; /* 为阅读时间提示留出空间 */
+                        padding-top: {RENDER_TOP_PADDING}px;
 
-                        /* 系统默认字体 */
-                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                        /* 字体 */
+                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
                         
-                        /* 根据21个字/行计算出的字体大小 */
+                        /* 基础字号 */
                         font-size: {BASE_FONT_SIZE}px;
                         line-height: 1.6;
-                        letter-spacing: 0.1em; /* 调整文字横向间距 */
-                        margin: 0 auto; /* 居中显示 */
+                        letter-spacing: 0.1em;
+                        margin: 0 auto;
 
-                        word-break: break-all; /* 防止长单词溢出 */
+                        word-break: break-all;
                         word-wrap: break-word;
                     }}
+
                     .header-info {{
                         position: absolute;
-                        top: 60px;
+                        top: 40px;
                         left: {RENDER_PADDING}px;
                         right: {RENDER_PADDING}px;
                         display: flex;
@@ -260,20 +270,104 @@ class MarkdownRenderer:
                         font-size: {HEADER_FONT_SIZE}px;
                         color: #888;
                     }}
-                    code {{
-                        font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
-                        /* 适配暗色主题的代码块样式 */
-                        background-color: #282A2C;
-                        color: #C3C5C3;
-                        padding: .2em .4em;
-                        margin: 0;
-                        font-size: 85%;
-                        border-radius: 6px;
+
+                    /* 移植自 base.html 的样式 */
+                    h1, h2, h3, h4, h5, h6 {{
+                        color: var(--primary-color);
+                        margin-top: 1.5rem;
+                        margin-bottom: 1rem;
+                        font-weight: 600;
+                        line-height: 1.25;
                     }}
-                    pre > code {{
-                        display: block;
-                        padding: 2px 30px;
-                        overflow: hidden;
+                    h1 {{ font-size: 1.8em; }}
+                    h2 {{ font-size: 1.5em; }}
+                    h3 {{ font-size: 1.3em; }}
+                    h4 {{ font-size: 1.1em; }}
+
+                    p {{
+                        margin-bottom: 1rem;
+                    }}
+
+                    a {{
+                        color: var(--secondary-color);
+                        text-decoration: none;
+                    }}
+                    a:hover {{
+                        text-decoration: underline;
+                    }}
+
+                    ul, ol {{
+                        margin-bottom: 1rem;
+                        padding-left: 2em;
+                    }}
+                    li {{
+                        margin-bottom: 0.5rem;
+                    }}
+
+                    blockquote {{
+                        border-left: 0.2em solid var(--primary-color);
+                        padding-left: 1em;
+                        margin: 1rem 0;
+                        font-style: italic;
+                        color: #b0b0b0;
+                        background-color: rgba(187, 134, 252, 0.05);
+                        padding: 0.5em 1em;
+                        border-radius: 0 8px 8px 0;
+                    }}
+
+                    code {{
+                        background-color: #333;
+                        color: #f8f8f2;
+                        padding: 0.1em 0.2em;
+                        border-radius: 4px;
+                        font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+                        font-size: 0.9em;
+                    }}
+
+                    pre {{
+                        background-color: #333;
+                        padding: 1rem;
+                        border-radius: 8px;
+                        overflow-x: auto;
+                        margin-bottom: 1rem;
+                        border: 1px solid var(--border-color);
+                    }}
+                    pre code {{
+                        background: none;
+                        padding: 0;
+                        font-size: 0.85em;
+                        color: #e0e0e0;
+                    }}
+
+                    table {{
+                        border-collapse: collapse;
+                        width: 100%;
+                        margin-bottom: 1rem;
+                        font-size: 0.9em;
+                    }}
+                    th, td {{
+                        border: 1px solid var(--border-color);
+                        padding: 0.5em;
+                        text-align: left;
+                    }}
+                    th {{
+                        background-color: #333;
+                        font-weight: 600;
+                        color: var(--primary-color);
+                    }}
+
+                    hr {{
+                        border: none;
+                        border-top: 2px solid var(--border-color);
+                        margin: 2rem 0;
+                    }}
+
+                    strong, b {{
+                        font-weight: 600;
+                        color: var(--secondary-color);
+                    }}
+                    em, i {{
+                        font-style: italic;
                     }}
                 </style>
             </head>
