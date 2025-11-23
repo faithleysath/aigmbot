@@ -96,6 +96,13 @@ class Database:
     async def close(self):
         """关闭数据库连接"""
         if self.conn:
+            try:
+                # 执行 WAL checkpoint，将日志合并到主数据库
+                await self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                await self.conn.commit()
+            except Exception as e:
+                LOG.warning(f"WAL checkpoint 失败: {e}")
+            
             await self.conn.close()
             LOG.info("数据库连接已关闭。")
 
