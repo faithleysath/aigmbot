@@ -317,13 +317,13 @@ class EventHandler:
 
         if emoji_id == str(EMOJI["COFFEE"]):  # 频道繁忙
             try:
-                await self.api.delete_msg(pending_game["message_id"])
-                await self.api.set_msg_emoji_like(
-                    message_id_str, str(EMOJI["CONFIRM"]), set=False
-                )
-                await self.api.set_msg_emoji_like(
-                    message_id_str, str(EMOJI["COFFEE"])
-                )
+                # await self.api.delete_msg(pending_game["message_id"])
+                # await self.api.set_msg_emoji_like(
+                #     message_id_str, str(EMOJI["CONFIRM"]), set=False
+                # )
+                # await self.api.set_msg_emoji_like(
+                #     message_id_str, str(EMOJI["COFFEE"])
+                # )
                 await self.api.post_group_msg(
                     group_id,
                     " 新游戏创建已取消。",
